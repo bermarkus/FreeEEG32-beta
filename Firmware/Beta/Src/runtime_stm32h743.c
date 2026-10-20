@@ -33,7 +33,13 @@ uint32_t runtime_init(void)
     return flags;
 }
 uint32_t runtime_micros(void) { return TIM2->CNT; }
-void runtime_sleep(void) { __DSB(); __WFI(); }
+/* FREEEEG32_IDLE_WFI defaults to 0 in runtime.h. */
+void runtime_sleep(void)
+{
+#if FREEEEG32_IDLE_WFI
+    __DSB(); __WFI();
+#endif
+}
 
 /* Register sequence follows ST's H7 IWDG driver. The peripheral/LSI continue
  * during ordinary Sleep. No IRQ feeds it and no option bytes are changed.

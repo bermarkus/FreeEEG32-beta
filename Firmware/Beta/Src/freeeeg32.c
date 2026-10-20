@@ -180,11 +180,11 @@ static void command(control_command cmd)
         break;
     case CONTROL_INFO:
 #ifdef FREEEEG32_UF2_APPLICATION
-        snprintf(reply, sizeof(reply), "OK INFO FreeEEG32-beta " FREEEEG32_VERSION " STM32H743 32ch CDC protocol=1 update=UF2 settings=flash-explicit-save idle=WFI usb_queue=16 cpu_mhz=%lu ahb_mhz=%lu requested_mhz=%u silicon_rev=0x%04lx build=%s watchdog=%s watchdog_nominal_ms=32768\r\n",
+        snprintf(reply, sizeof(reply), "OK INFO FreeEEG32-beta " FREEEEG32_VERSION " STM32H743 32ch CDC protocol=1 update=UF2 settings=flash-explicit-save idle=" FREEEEG32_IDLE_NAME " usb_queue=16 cpu_mhz=%lu ahb_mhz=%lu requested_mhz=%u silicon_rev=0x%04lx build=%s watchdog=%s watchdog_nominal_ms=32768\r\n",
             (unsigned long)(SystemCoreClock / 1000000u), (unsigned long)(HAL_RCC_GetHCLKFreq() / 1000000u),
             (unsigned)FREEEEG32_CPU_MHZ, (unsigned long)HAL_GetREVID(), FREEEEG32_BUILD_TAG, watchdog_active() ? "IWDG1" : "not-started");
 #else
-        snprintf(reply, sizeof(reply), "OK INFO FreeEEG32-beta " FREEEEG32_VERSION " STM32H743 32ch CDC protocol=1 update=SWD settings=flash-explicit-save idle=WFI usb_queue=16 cpu_mhz=%lu ahb_mhz=%lu requested_mhz=%u silicon_rev=0x%04lx build=%s watchdog=%s watchdog_nominal_ms=32768\r\n",
+        snprintf(reply, sizeof(reply), "OK INFO FreeEEG32-beta " FREEEEG32_VERSION " STM32H743 32ch CDC protocol=1 update=SWD settings=flash-explicit-save idle=" FREEEEG32_IDLE_NAME " usb_queue=16 cpu_mhz=%lu ahb_mhz=%lu requested_mhz=%u silicon_rev=0x%04lx build=%s watchdog=%s watchdog_nominal_ms=32768\r\n",
             (unsigned long)(SystemCoreClock / 1000000u), (unsigned long)(HAL_RCC_GetHCLKFreq() / 1000000u),
             (unsigned)FREEEEG32_CPU_MHZ, (unsigned long)HAL_GetREVID(), FREEEEG32_BUILD_TAG, watchdog_active() ? "IWDG1" : "not-started");
 #endif
