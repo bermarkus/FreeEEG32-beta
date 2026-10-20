@@ -321,6 +321,29 @@ static void command(control_command cmd)
                  (unsigned long)cmd.first, (unsigned long)cmd.second);
         break;
     }
+    case CONTROL_SPIREAD: {
+        /* Raw read frames for one register: 2-byte, 2-byte again (shows a reply that arrives
+           one frame late), then 3-byte. Every received byte is reported. */
+        uint8_t tx[3] = { (uint8_t)(0x80u | cmd.second), 0, 0 }, a[3] = {0}, b[3] = {0}, c[3] = {0};
+        unsigned adc = cmd.first - 1;
+        int ra = runtime_adc_spi_raw(adc, tx, a, 2);
+        int rb = runtime_adc_spi_raw(adc, tx, b, 2);
+        int rc = runtime_adc_spi_raw(adc, tx, c, 3);
+        uint8_t driver_value = 0;
+        int rd = ad7779_spi_int_reg_read(devices[adc], (uint8_t)cmd.second, &driver_value);
+        snprintf(reply, sizeof(reply), "OK SPIREAD adc=%lu reg=0x%02lx f1=%02x,%02x f2=%02x,%02x f3=%02x,%02x,%02x status=%d,%d,%d driver=%02x,%d\r\n",
+            (unsigned long)cmd.first, (unsigned long)cmd.second, a[0], a[1], b[0], b[1], c[0], c[1], c[2], ra, rb, rc,
+            driver_value, rd);
+        break;
+    }
+    case CONTROL_SPIWRITE: {
+        /* Raw write for bench diagnosis; bypasses settings, verification and caches. */
+        uint8_t tx[2] = { (uint8_t)(cmd.second & 0x7fu), (uint8_t)cmd.third }, rx[2] = {0};
+        int status = runtime_adc_spi_raw(cmd.first - 1, tx, rx, 2);
+        snprintf(reply, sizeof(reply), "OK SPIWRITE adc=%lu reg=0x%02lx value=0x%02lx rx=%02x,%02x status=%d\r\n",
+            (unsigned long)cmd.first, (unsigned long)cmd.second, (unsigned long)cmd.third, rx[0], rx[1], status);
+        break;
+    }
     case CONTROL_REBOOT:
         snprintf(reply, sizeof(reply), "OK REBOOT\r\n"); reboot_after_reply = 1; break;
     case CONTROL_BOOTLOADER:

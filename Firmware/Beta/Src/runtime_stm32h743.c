@@ -1,5 +1,7 @@
 #include "stm32h7xx_hal.h"
 #include "runtime.h"
+#include "ad7779.h"
+#include "platform_drivers.h"
 #ifdef FREEEEG32_UF2_APPLICATION
 #include "boot_request.h"
 #endif
@@ -33,6 +35,15 @@ uint32_t runtime_init(void)
     return flags;
 }
 uint32_t runtime_micros(void) { return TIM2->CNT; }
+int runtime_adc_spi_raw(unsigned adc, uint8_t *tx, uint8_t *rx, uint8_t length)
+{
+    extern ad7779_dev *devices[4];
+    ad7779_dev *dev = adc < 4 ? devices[adc] : NULL;
+    if (!dev) return -1;
+    return spi_write_and_read(dev->spi_dev.dev, dev->spi_dev.chip_select_port,
+                              dev->spi_dev.chip_select_pin, tx, rx, length);
+}
+
 /* FREEEEG32_IDLE_WFI defaults to 0 in runtime.h. */
 void runtime_sleep(void)
 {

@@ -14,6 +14,8 @@ uint32_t runtime_micros(void);
 #define FREEEEG32_IDLE_NAME "spin"
 #endif
 void runtime_sleep(void); /* Ordinary WFI Sleep (or nothing); caller masks IRQs and checks work first. */
+/* Diagnostic: one raw SPI frame to ADC 0..3 (chip select handled by the SPI peripheral). */
+int runtime_adc_spi_raw(unsigned adc, uint8_t *tx, uint8_t *rx, uint8_t length);
 int runtime_watchdog_start(void); /* IWDG1, nominal 32.768 s; LSI tolerance applies. */
 void runtime_watchdog_feed(void);
 #endif

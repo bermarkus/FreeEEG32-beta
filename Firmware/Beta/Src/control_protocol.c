@@ -5,7 +5,7 @@
 
 static control_command parse(char *line)
 {
-    control_command cmd = { CONTROL_ERROR, 0, 0 };
+    control_command cmd = { CONTROL_ERROR, 0, 0, 0 };
     char *words[4], *p = line, *end;
     unsigned count = 0;
     while (*p) {
@@ -39,9 +39,10 @@ static control_command parse(char *line)
         return cmd;
     }
     if ((count == 2 && !strcmp(words[0], "RATE")) ||
-        (count == 3 && !strcmp(words[0], "GAIN"))) {
+        (count == 3 && (!strcmp(words[0], "GAIN") || !strcmp(words[0], "SPIREAD"))) ||
+        (count == 4 && !strcmp(words[0], "SPIWRITE"))) {
         unsigned i;
-        uint32_t values[2] = {0, 0};
+        uint32_t values[3] = {0, 0, 0};
         for (i = 1; i < count; ++i) {
             /* Explicitly reject signs, suffixes and overflow before strtoul. */
             const char *q = words[i];
@@ -50,23 +51,28 @@ static control_command parse(char *line)
             values[i - 1] = (uint32_t)strtoul(words[i], &end, 10);
             if (*end) return cmd;
         }
-        cmd.first = values[0]; cmd.second = values[1];
+        cmd.first = values[0]; cmd.second = values[1]; cmd.third = values[2];
         if (count == 2 && (cmd.first == 512 || cmd.first == 1024 || cmd.first == 2048))
             cmd.kind = CONTROL_RATE;
-        if (count == 3 && cmd.first >= 1 && cmd.first <= 32 &&
+        if (count == 3 && !strcmp(words[0], "GAIN") && cmd.first >= 1 && cmd.first <= 32 &&
             (cmd.second == 1 || cmd.second == 2 || cmd.second == 4 || cmd.second == 8))
             cmd.kind = CONTROL_GAIN;
+        if (count == 3 && !strcmp(words[0], "SPIREAD") && cmd.first >= 1 && cmd.first <= 4 &&
+            cmd.second <= 127)
+            cmd.kind = CONTROL_SPIREAD;
+        if (count == 4 && cmd.first >= 1 && cmd.first <= 4 && cmd.second <= 127 && cmd.third <= 255)
+            cmd.kind = CONTROL_SPIWRITE;
     }
     return cmd;
 }
 
 control_command control_feed(control_parser *parser, uint8_t byte)
 {
-    control_command cmd = { CONTROL_NONE, 0, 0 };
+    control_command cmd = { CONTROL_NONE, 0, 0, 0 };
     if (byte == '\r' || byte == '\n') {
         if (parser->used && parser->line[0] == '!') {
             parser->line[parser->used] = 0;
-            cmd = parser->overflow ? (control_command){ CONTROL_ERROR, 0, 0 }
+            cmd = parser->overflow ? (control_command){ CONTROL_ERROR, 0, 0, 0 }
                                    : parse(parser->line + 1);
         }
         parser->used = 0; parser->overflow = 0;

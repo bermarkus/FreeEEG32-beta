@@ -21,6 +21,8 @@ uint32_t test_primask;
 uint32_t runtime_init(void) { return 0x12340000; }
 uint32_t runtime_micros(void) { return micros; }
 void runtime_sleep(void) { assert(test_primask == 1); ++sleeping; micros += 20; }
+int runtime_adc_spi_raw(unsigned adc, uint8_t *tx, uint8_t *rx, uint8_t length)
+{ unsigned i; assert(adc < 4 && length <= 3); for (i = 0; i < length; ++i) rx[i] = (uint8_t)(tx[0] + i); return 0; }
 int runtime_watchdog_start(void) { return 1; }
 void runtime_watchdog_feed(void) { }
 void test_set_primask(uint32_t mask)
@@ -96,6 +98,11 @@ int main(void)
     assert(line("!RATE 512junk\n").kind == CONTROL_ERROR);
     assert(line("!RATE 99999999999999\n").kind == CONTROL_ERROR);
     assert(line("!GAIN 32 8\n").kind == CONTROL_GAIN);
+    assert(line("!SPIREAD 1 17\n").kind == CONTROL_SPIREAD);
+    assert(line("!SPIREAD 5 17\n").kind == CONTROL_ERROR && line("!SPIREAD 1 128\n").kind == CONTROL_ERROR);
+    assert(line("!SPIREAD 4 8\n").kind == CONTROL_SPIREAD && line("!GAIN 4 3\n").kind == CONTROL_ERROR);
+    assert(line("!SPIWRITE 1 17 64\n").kind == CONTROL_SPIWRITE && line("!SPIWRITE 1 17 256\n").kind == CONTROL_ERROR);
+    assert(line("!SPIWRITE 1 17 64\n").third == 64 && line("!GAIN 1 8 1\n").kind == CONTROL_ERROR);
     assert(line("!GAIN 0 8\n").kind == CONTROL_ERROR);
     assert(line("!GAIN 33 1\n").kind == CONTROL_ERROR);
     assert(line("!GAIN 1 3\n").kind == CONTROL_ERROR);
@@ -215,6 +222,9 @@ int main(void)
     command(line("!STOP\n")); assert(strstr(reply, "was_streaming=0"));
     watchdog_init(HAL_GetTick()); assert(watchdog_active());
     fail_read = 1; assert(!set_rate(2048) && adc_fault);
+    command(line("!SPIREAD 2 17\n"));
+    assert(strstr(reply, "adc=2 reg=0x11 f1=91,92 f2=91,92 f3=91,92,93 status=0,0,0 driver=") && reply_length < sizeof(reply));
+    command(line("!SPIWRITE 3 17 64\n")); assert(strstr(reply, "adc=3 reg=0x11 value=0x40 rx=11,12 status=0"));
     command(line("!INFO\n")); assert(strstr(reply, "cpu_mhz=80 ahb_mhz=40"));
     assert(strstr(reply, "build=" FREEEEG32_BUILD_TAG) && reply_length < sizeof(reply));
     assert(strstr(reply, "watchdog=IWDG1"));
