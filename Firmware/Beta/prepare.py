@@ -138,7 +138,7 @@ def prepare():
   __HAL_RCC_CRS_CLK_ENABLE();
   RCC_CRSInitTypeDef crs = {0};
   crs.Prescaler = RCC_CRS_SYNC_DIV1;
-  crs.Source = RCC_CRS_SYNC_SOURCE_USB2;
+  crs.Source = RCC_CRS_SYNC_SOURCE_USB1; /* USB1 = OTG_HS, the port wired to PB14/PB15. */
   crs.Polarity = RCC_CRS_SYNC_POLARITY_RISING;
   crs.ReloadValue = __HAL_RCC_CRS_RELOADVALUE_CALCULATE(48000000, 1000);
   crs.ErrorLimitValue = RCC_CRS_ERRORLIMIT_DEFAULT;
@@ -146,6 +146,16 @@ def prepare():
   HAL_RCCEx_CRSConfig(&crs);''')
         return s
     edit('Src/usb_device.c', clock)
+    # The generated suspend callback stops the PHY clock, but neither the HAL reset nor the
+    # resume path restarts it, so a suspend (e.g. data cable connected after boot) leaves the
+    # device unable to answer the next enumeration. The board is self-powered: keep it running.
+    def usb_conf(s):
+        s = replace(s, '  __HAL_PCD_GATE_PHYCLOCK(hpcd);\n',
+                    '  /* PHY clock deliberately not gated: nothing restarts it on reset/resume. */\n')
+        s = replace(s, '  /* USER CODE BEGIN 3 */\n',
+                    '  /* USER CODE BEGIN 3 */\n  __HAL_PCD_UNGATE_PHYCLOCK(hpcd);\n')
+        return s
+    edit('Src/usbd_conf.c', usb_conf)
     # DMA scratch memory has no flash image. Without NOLOAD, objcopy fills the entire
     # address gap from internal flash to SRAM, producing a ~640 MB binary.
     edit('STM32H743ZITx_FLASH.ld', lambda s: replace(s, '.dma_buffer :', '.dma_buffer (NOLOAD) :'))

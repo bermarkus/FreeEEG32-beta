@@ -22,7 +22,9 @@ uint32_t runtime_init(void)
        is added: existing DRDY, DMA, USB, UART and SysTick IRQs wake the core. */
     __HAL_RCC_DMA1_CLK_SLEEP_ENABLE(); __HAL_RCC_DMA2_CLK_SLEEP_ENABLE();
     __HAL_RCC_SAI1_CLK_SLEEP_ENABLE(); __HAL_RCC_SAI2_CLK_SLEEP_ENABLE();
-    __HAL_RCC_USB2_OTG_FS_CLK_SLEEP_ENABLE(); __HAL_RCC_USART1_CLK_SLEEP_ENABLE();
+    /* USB is OTG_HS (USB1) with the embedded FS PHY; the absent ULPI PHY clock must be off in Sleep. */
+    __HAL_RCC_USB1_OTG_HS_CLK_SLEEP_ENABLE(); __HAL_RCC_USB1_OTG_HS_ULPI_CLK_SLEEP_DISABLE();
+    __HAL_RCC_USART1_CLK_SLEEP_ENABLE();
     __HAL_RCC_TIM2_CLK_ENABLE(); __HAL_RCC_TIM2_CLK_SLEEP_ENABLE();
     /* All supported profiles use APB1 /2 with TIMPRE=0: timer clock = 2*PCLK1. */
     TIM2->CR1 = 0; TIM2->PSC = (2u * HAL_RCC_GetPCLK1Freq() / 1000000u) - 1u;

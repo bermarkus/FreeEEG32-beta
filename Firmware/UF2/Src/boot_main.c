@@ -73,7 +73,7 @@ int main(void)
     HAL_PWREx_EnableUSBVoltageDetector();
     __HAL_RCC_CRS_CLK_ENABLE();
     RCC_CRSInitTypeDef crs = {0};
-    crs.Prescaler = RCC_CRS_SYNC_DIV1; crs.Source = RCC_CRS_SYNC_SOURCE_USB2;
+    crs.Prescaler = RCC_CRS_SYNC_DIV1; crs.Source = RCC_CRS_SYNC_SOURCE_USB1; /* OTG_HS */
     crs.Polarity = RCC_CRS_SYNC_POLARITY_RISING;
     crs.ReloadValue = __HAL_RCC_CRS_RELOADVALUE_CALCULATE(48000000, 1000);
     crs.ErrorLimitValue = RCC_CRS_ERRORLIMIT_DEFAULT;
