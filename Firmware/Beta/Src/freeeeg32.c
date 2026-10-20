@@ -37,7 +37,11 @@ static uint32_t window_stamp, window_events, window_acquired, window_wait_us;
 static uint32_t measured_drdy_millihz, measured_capture_millihz, measured_wait_permille, measured_window_us;
 static uint32_t sleep_entries;
 static int capturing, streaming = 1, start_after_reply, reboot_after_reply, adc_fault;
-static uint32_t adc_fault_mask, last_fault_adc, last_fault_reg;
+static uint32_t adc_fault_mask, last_fault_adc, last_fault_reg, last_fault_value;
+#ifndef FREEEEG32_STRICT_READBACK
+#define FREEEEG32_STRICT_READBACK 0
+#endif
+static uint32_t readback_mask; /* ADCs whose register readback disagreed with a write. */
 static const char *last_fault_op = "NONE";
 #ifdef FREEEEG32_UF2_APPLICATION
 static int bootloader_after_reply;
@@ -79,14 +83,44 @@ static void adc_problem(unsigned adc, uint8_t reg, const char *operation)
     last_fault_adc = adc + 1; last_fault_reg = reg; last_fault_op = operation;
 }
 
-static int verify(ad7779_dev *dev, uint8_t reg, uint8_t expected, uint8_t mask)
+/* 1 = matches; 0 = read succeeded but disagrees; -1 = SPI read failed. */
+static int readback(ad7779_dev *dev, uint8_t reg, uint8_t expected, uint8_t mask)
 {
     uint8_t actual = 0;
     unsigned i;
-    int ok = ad7779_spi_int_reg_read(dev, reg, &actual) == 0 &&
-             (actual & mask) == (expected & mask);
-    if (!ok) for (i = 0; i < 4; ++i) if (devices[i] == dev) adc_problem(i, reg, "READBACK");
-    return ok;
+    int read_ok = ad7779_spi_int_reg_read(dev, reg, &actual) == 0;
+    int match = read_ok && (actual & mask) == (expected & mask);
+    if (!match) for (i = 0; i < 4; ++i) if (devices[i] == dev) {
+        if (read_ok && !FREEEEG32_STRICT_READBACK) {
+            readback_mask |= 1u << i;
+            last_fault_adc = i + 1; last_fault_reg = reg; last_fault_op = "READBACK";
+            last_fault_value = actual;
+        } else adc_problem(i, reg, "READBACK");
+    }
+    return match ? 1 : read_ok ? 0 : -1;
+}
+
+/* A mismatch is reported in readback_mask. Only SPI errors stop acquisition, unless
+   built with FREEEEG32_STRICT_READBACK=1. !CHECK always reports the true readback. */
+static int verify(ad7779_dev *dev, uint8_t reg, uint8_t expected, uint8_t mask)
+{
+    int result = readback(dev, reg, expected, mask);
+    return result > 0 || (result == 0 && !FREEEEG32_STRICT_READBACK);
+}
+
+/* Register value, or -1 if the SPI read failed. */
+static int read_register(ad7779_dev *dev, uint8_t reg)
+{
+    uint8_t value = 0;
+    return ad7779_spi_int_reg_read(dev, reg, &value) == 0 ? value : -1;
+}
+
+/* DRDY rate over 500 ms; DRDY keeps counting while streaming is paused. */
+static uint32_t measure_drdy_hz(void)
+{
+    uint32_t before = ready_events;
+    HAL_Delay(500);
+    return (ready_events - before) * 2u;
 }
 
 static int set_rate(uint32_t hz)
@@ -101,10 +135,13 @@ static int set_rate(uint32_t hz)
         if (ad7779_set_dec_rate(dev, decimation, 0) != 0) {
             adc_problem(i, AD7779_REG_SRC_N_MSB, "RATE_WRITE"); ok = 0;
         }
-        if (!verify(dev, AD7779_REG_SRC_N_MSB, (uint8_t)(decimation >> 8), 15) ||
-            !verify(dev, AD7779_REG_SRC_N_LSB, (uint8_t)decimation, 255) ||
-            !verify(dev, AD7779_REG_SRC_IF_MSB, 0, 255) ||
-            !verify(dev, AD7779_REG_SRC_IF_LSB, 0, 255)) ok = 0;
+        /* SRC_N reads back 0x0800 in the working 512 Hz state on this board, so it cannot
+           verify the rate; !CHECK measures DRDY instead. The reads are kept so the boot
+           SPI sequence that yields 512 Hz is unchanged. */
+        if (read_register(dev, AD7779_REG_SRC_N_MSB) < 0 || read_register(dev, AD7779_REG_SRC_N_LSB) < 0 ||
+            read_register(dev, AD7779_REG_SRC_IF_MSB) < 0 || read_register(dev, AD7779_REG_SRC_IF_LSB) < 0) {
+            adc_problem(i, AD7779_REG_SRC_N_MSB, "RATE_READ"); ok = 0;
+        }
     }
     /* Load all four SRC values using the base firmware's software update sequence. */
     for (i = 0; i < 4; ++i) {
@@ -190,30 +227,31 @@ static void command(control_command cmd)
 #endif
         break;
     case CONTROL_STATUS:
-        snprintf(reply, sizeof(reply), "OK STATUS rate=%lu acquired=%lu missed=%lu dma_errors=%lu usb_dropped=%lu uart_dropped=%lu rx_dropped=%lu adc_fault=%d streaming=0 usb_queued=%lu usb_high_water=%lu control_discarded=%lu adc_fault_mask=0x%lx last_adc=%lu last_reg=0x%02lx last_op=%s uptime_ms=%lu\r\n",
+        snprintf(reply, sizeof(reply), "OK STATUS rate=%lu acquired=%lu missed=%lu dma_errors=%lu usb_dropped=%lu uart_dropped=%lu rx_dropped=%lu adc_fault=%d streaming=0 usb_queued=%lu usb_high_water=%lu control_discarded=%lu adc_fault_mask=0x%lx last_adc=%lu last_reg=0x%02lx last_op=%s uptime_ms=%lu readback_mask=0x%lx\r\n",
             (unsigned long)rate, (unsigned long)acquired, (unsigned long)missed,
             (unsigned long)dma_errors, (unsigned long)usb_dropped, (unsigned long)uart_dropped,
             (unsigned long)rx_dropped, adc_fault, (unsigned long)(usb_head - usb_tail),
             (unsigned long)usb_high_water, (unsigned long)control_discarded, (unsigned long)adc_fault_mask,
-            (unsigned long)last_fault_adc, (unsigned long)last_fault_reg, last_fault_op, (unsigned long)HAL_GetTick()); break;
+            (unsigned long)last_fault_adc, (unsigned long)last_fault_reg, last_fault_op, (unsigned long)HAL_GetTick(),
+            (unsigned long)readback_mask); break;
     case CONTROL_CHECK: {
         unsigned i, ch;
-        uint32_t failed = 0, decimation = 2048000u / rate;
+        uint32_t failed = 0, drdy_hz = measure_drdy_hz();
+        /* All four ADCs share MCLK and SYNC; ADC1's DRDY clocks every capture. */
+        int rate_ok = drdy_hz * 100u >= rate * 99u && drdy_hz * 100u <= rate * 101u;
         for (i = 0; i < 4; ++i) {
-            int good = verify(devices[i], AD7779_REG_SRC_N_MSB, (uint8_t)(decimation >> 8), 15);
-            if (!verify(devices[i], AD7779_REG_SRC_N_LSB, (uint8_t)decimation, 255)) good = 0;
-            if (!verify(devices[i], AD7779_REG_SRC_IF_MSB, 0, 255)) good = 0;
-            if (!verify(devices[i], AD7779_REG_SRC_IF_LSB, 0, 255)) good = 0;
+            int good = rate_ok;
             for (ch = 0; ch < 8; ++ch) {
                 unsigned gain = current_settings.gains[i * 8 + ch];
                 unsigned code = gain == 8 ? 3 : gain == 4 ? 2 : gain == 2 ? 1 : 0;
-                if (!verify(devices[i], AD7779_REG_CH_CONFIG(ch), (uint8_t)(code << 6), 0xc0)) good = 0;
+                if (readback(devices[i], AD7779_REG_CH_CONFIG(ch), (uint8_t)(code << 6), 0xc0) <= 0) good = 0;
             }
             if (!good) failed |= 1u << i;
         }
-        snprintf(reply, sizeof(reply), "OK CHECK adc_ok_mask=0x%lx adc_failed_mask=0x%lx adc_fault=%d last_adc=%lu last_reg=0x%02lx last_op=%s\r\n",
+        snprintf(reply, sizeof(reply), "OK CHECK adc_ok_mask=0x%lx adc_failed_mask=0x%lx adc_fault=%d last_adc=%lu last_reg=0x%02lx last_op=%s readback_mask=0x%lx drdy_hz=%lu rate_ok=%d last_value=0x%02lx\r\n",
             (unsigned long)(15u & ~failed), (unsigned long)failed, adc_fault,
-            (unsigned long)last_fault_adc, (unsigned long)last_fault_reg, last_fault_op);
+            (unsigned long)last_fault_adc, (unsigned long)last_fault_reg, last_fault_op,
+            (unsigned long)readback_mask, (unsigned long)drdy_hz, rate_ok, (unsigned long)last_fault_value);
         break;
     }
     case CONTROL_DIAG:

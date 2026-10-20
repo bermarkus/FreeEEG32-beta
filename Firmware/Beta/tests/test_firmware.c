@@ -14,7 +14,7 @@ ad7779_dev *devices[4] = { &adc_devices[0], &adc_devices[1], &adc_devices[2], &a
 USBD_HandleTypeDef hUsbDeviceHS;
 static USBD_CDC_HandleTypeDef test_cdc;
 static unsigned tick, receives, usb_frames, stops, fail_receive, fail_read;
-static int fail_adc = -1;
+static int fail_adc = -1, corrupt_adc = -1;
 static uint8_t transmitted[2048], settings_memory[SETTINGS_BYTES];
 static uint32_t micros, sleeping, wake_dma, wake_drdy, usb_busy, transmitted_length;
 uint32_t test_primask;
@@ -40,7 +40,8 @@ uint32_t HAL_GetREVID(void) { return 0x2003; }
 uint32_t HAL_RCC_GetHCLKFreq(void) { return 40000000u; }
 
 uint32_t HAL_GetTick(void) { return tick; }
-void HAL_Delay(uint32_t delay) { tick += delay; micros += delay * 1000; }
+static uint32_t simulated_drdy_hz; /* DRDY events generated while HAL_Delay runs */
+void HAL_Delay(uint32_t delay) { tick += delay; micros += delay * 1000; ready_events += delay * simulated_drdy_hz / 1000; }
 int HAL_SAI_DMAStop(SAI_HandleTypeDef *sai) { ++stops; sai->state = 0; return 0; }
 int HAL_SAI_GetState(SAI_HandleTypeDef *sai) { return sai->state; }
 uint32_t HAL_SAI_GetError(SAI_HandleTypeDef *sai) { (void)sai; return 0; }
@@ -60,7 +61,11 @@ int HAL_UART_Transmit_DMA(UART_HandleTypeDef *uart, uint8_t *buffer, uint16_t le
 uint8_t CDC_Transmit_HS(uint8_t *buffer, uint16_t length)
 { if (usb_busy || test_cdc.TxState) return USBD_BUSY; assert(length <= sizeof(transmitted)); memcpy(transmitted, buffer, length); transmitted_length = length; ++usb_frames; return USBD_OK; }
 int ad7779_spi_int_reg_read(ad7779_dev *dev, uint8_t reg, uint8_t *value)
-{ if (fail_read || (fail_adc >= 0 && dev == &adc_devices[fail_adc])) return -1; *value = dev->regs[reg]; return 0; }
+{
+    if (fail_read || (fail_adc >= 0 && dev == &adc_devices[fail_adc])) return -1;
+    *value = corrupt_adc >= 0 && dev == &adc_devices[corrupt_adc] ? 0 : dev->regs[reg]; /* bench: reads 0x00 */
+    return 0;
+}
 int ad7779_spi_int_reg_write_mask(ad7779_dev *dev, uint8_t reg, uint8_t mask, uint8_t value)
 { dev->regs[reg] = (dev->regs[reg] & ~mask) | value; return 0; }
 int ad7779_set_dec_rate(ad7779_dev *dev, uint16_t integer, uint16_t fractional)
@@ -182,12 +187,26 @@ int main(void)
     wake_dma = 1; idle_if_possible(); assert(sleeping == 3);
     idle_if_possible(); assert(sleeping == 3);
     acquire(); assert(!capturing); pump_usb();
+    simulated_drdy_hz = 0; /* No DRDY: the measured rate fails every ADC. */
+    command(line("!CHECK\n")); assert(strstr(reply, "adc_ok_mask=0x0 adc_failed_mask=0xf") && strstr(reply, "drdy_hz=0 rate_ok=0"));
+    simulated_drdy_hz = rate;
     command(line("!CHECK\n")); assert(strstr(reply, "adc_ok_mask=0xf adc_failed_mask=0x0 adc_fault=0"));
+    assert(strstr(reply, "rate_ok=1"));
+    {
+        /* A successful read with the wrong value is reported, but does not stop acquisition. */
+        unsigned gain8 = current_settings.gains[8];
+        corrupt_adc = 1;
+        command(line("!CHECK\n")); assert(strstr(reply, "adc_ok_mask=0xd adc_failed_mask=0x2 adc_fault=0"));
+        assert(strstr(reply, "readback_mask=0x2"));
+        assert(set_gain(8, 4) && !adc_fault && current_settings.gains[8] == 4);
+        corrupt_adc = -1; assert(set_gain(8, gain8)); readback_mask = 0;
+    }
     fail_adc = 2;
     command(line("!CHECK\n")); assert(strstr(reply, "adc_ok_mask=0xb adc_failed_mask=0x4 adc_fault=1"));
     assert(strstr(reply, "last_adc=3") && strstr(reply, "last_op=READBACK"));
     fail_adc = -1;
     command(line("!CHECK\n")); assert(strstr(reply, "adc_ok_mask=0xf adc_failed_mask=0x0 adc_fault=1"));
+    simulated_drdy_hz = 0; seen_events = ready_events;
     streaming = 1; command(line("!STOP\n")); assert(strstr(reply, "was_streaming=1"));
     command(line("!STOP\n")); assert(strstr(reply, "was_streaming=0"));
     watchdog_init(HAL_GetTick()); assert(watchdog_active());
