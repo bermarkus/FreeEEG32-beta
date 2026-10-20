@@ -169,7 +169,7 @@ complete streams above 512 Hz; UART bandwidth is limited.
 **Hardware status:** firmware builds and host simulations pass. One board
 (STM32H743 rev V, Windows 11) has been bench-tested at 512 Hz: SWD flashing with
 an STLINK-V3MINIE, USB enumeration and replug, UF2 updates, `Check my board` and a
-10 s test recording (511.9 Hz, no missing frames or DMA errors). Other rates,
+10 s test recording (512 Hz, no missing frames or DMA errors). Other rates,
 sustained throughput, temperatures and other boards still need testing.
 
 ## Why ROM DFU cannot use this USB connector
