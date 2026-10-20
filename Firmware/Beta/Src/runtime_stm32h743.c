@@ -1,5 +1,6 @@
 #include "stm32h7xx_hal.h"
 #include "runtime.h"
+#include "main.h"
 #include "ad7779.h"
 #include "platform_drivers.h"
 #ifdef FREEEEG32_UF2_APPLICATION
@@ -35,6 +36,21 @@ uint32_t runtime_init(void)
     return flags;
 }
 uint32_t runtime_micros(void) { return TIM2->CNT; }
+/* Same low-high-low START sequence as the base initialization, with shorter phases. */
+void runtime_adc_sync(void)
+{
+    static GPIO_TypeDef *const ports[] = { ADC1_START_GPIO_Port, ADC2_START_GPIO_Port,
+                                           ADC3_START_GPIO_Port, ADC4_START_GPIO_Port };
+    static const uint16_t pins[] = { ADC1_START_Pin, ADC2_START_Pin, ADC3_START_Pin, ADC4_START_Pin };
+    unsigned i;
+    for (i = 0; i < 4; ++i) HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_RESET);
+    HAL_Delay(1);
+    for (i = 0; i < 4; ++i) HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_SET);
+    HAL_Delay(1);
+    for (i = 0; i < 4; ++i) HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_RESET);
+    HAL_Delay(1);
+}
+
 int runtime_adc_spi_raw(unsigned adc, uint8_t *tx, uint8_t *rx, uint8_t length)
 {
     extern ad7779_dev *devices[4];

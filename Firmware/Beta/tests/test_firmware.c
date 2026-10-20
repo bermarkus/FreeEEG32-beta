@@ -23,6 +23,8 @@ uint32_t runtime_micros(void) { return micros; }
 void runtime_sleep(void) { assert(test_primask == 1); ++sleeping; micros += 20; }
 int runtime_adc_spi_raw(unsigned adc, uint8_t *tx, uint8_t *rx, uint8_t length)
 { unsigned i; assert(adc < 4 && length <= 3); for (i = 0; i < length; ++i) rx[i] = (uint8_t)(tx[0] + i); return 0; }
+static unsigned adc_syncs;
+void runtime_adc_sync(void) { ++adc_syncs; }
 int runtime_watchdog_start(void) { return 1; }
 void runtime_watchdog_feed(void) { }
 void test_set_primask(uint32_t mask)
@@ -65,11 +67,13 @@ uint8_t CDC_Transmit_HS(uint8_t *buffer, uint16_t length)
 int ad7779_spi_int_reg_read(ad7779_dev *dev, uint8_t reg, uint8_t *value)
 {
     if (fail_read || (fail_adc >= 0 && dev == &adc_devices[fail_adc])) return -1;
-    *value = corrupt_adc >= 0 && dev == &adc_devices[corrupt_adc] ? 0 : dev->regs[reg]; /* bench: reads 0x00 */
+    *value = corrupt_adc >= 0 && dev == &adc_devices[corrupt_adc] ? 0 : dev->regs[reg]; /* simulated mismatch */
     return 0;
 }
 int ad7779_spi_int_reg_write_mask(ad7779_dev *dev, uint8_t reg, uint8_t mask, uint8_t value)
 { dev->regs[reg] = (dev->regs[reg] & ~mask) | value; return 0; }
+int ad7779_spi_int_reg_write(ad7779_dev *dev, uint8_t reg, uint8_t value)
+{ dev->regs[reg] = value; return 0; }
 int ad7779_set_dec_rate(ad7779_dev *dev, uint16_t integer, uint16_t fractional)
 {
     assert(fractional == 0);
@@ -123,12 +127,13 @@ int main(void)
     control_feed(&local, '!');
     for (i = 0; i < 200; ++i) control_feed(&local, 'A');
     assert(control_feed(&local, '\n').kind == CONTROL_ERROR);
-    assert(set_rate(1024)); assert(rate == 1024);
+    { unsigned syncs = adc_syncs;
+    assert(set_rate(1024)); assert(rate == 1024 && adc_syncs == syncs + 1); }
     for (i = 0; i < 4; ++i) assert(adc_devices[i].regs[96] == 7 && adc_devices[i].regs[97] == 208);
-    /* After boot programming, an unchanged rate is not rewritten (bench: rewrite breaks 512 Hz). */
-    rate_programmed = 1; adc_devices[0].regs[96] = 0;
-    assert(set_rate(1024) && rate == 1024 && adc_devices[0].regs[96] == 0);
-    rate_programmed = 0; adc_devices[0].regs[96] = 7;
+    /* AD7771 SINC5 (FILTER_MODE) cannot reach 512 Hz; boot selects SINC3 and resyncs. */
+    for (i = 0; i < 4; ++i) adc_devices[i].regs[18] = 0x49;
+    { unsigned syncs = adc_syncs; assert(select_sinc3() && adc_syncs == syncs + 1); }
+    for (i = 0; i < 4; ++i) assert(adc_devices[i].regs[18] == 0x09);
     assert(ready_events == 0); FreeEEG32_DataReady(2); assert(ready_events == 0);
     FreeEEG32_DataReady(ADC1_DRDY_Pin); acquire();
     assert(receives == 4 && capturing && acquired == 0);

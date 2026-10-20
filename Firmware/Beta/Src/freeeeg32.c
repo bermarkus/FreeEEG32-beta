@@ -41,9 +41,7 @@ static uint32_t adc_fault_mask, last_fault_adc, last_fault_reg, last_fault_value
 #ifndef FREEEEG32_STRICT_READBACK
 #define FREEEEG32_STRICT_READBACK 0
 #endif
-static uint32_t readback_mask; /* ADCs whose register readback disagreed with a write. */
-static int rate_programmed; /* Set after boot has programmed the ADC rate. */
-static const char *last_fault_op = "NONE";
+static uint32_t readback_mask; /* ADCs whose register readback disagreed with a write. */static const char *last_fault_op = "NONE";
 #ifdef FREEEEG32_UF2_APPLICATION
 static int bootloader_after_reply;
 #endif
@@ -109,11 +107,26 @@ static int verify(ad7779_dev *dev, uint8_t reg, uint8_t expected, uint8_t mask)
     return result > 0 || (result == 0 && !FREEEEG32_STRICT_READBACK);
 }
 
-/* Register value, or -1 if the SPI read failed. */
-static int read_register(ad7779_dev *dev, uint8_t reg)
+/* The ADCs are AD7771 (BOM: AD7771BCPZ). Its SINC5 filter limits the decimation to
+   16..2048, i.e. at least 1 kHz from the 2.048 MHz high-resolution modulator, so 512 Hz
+   needs the SINC3 filter (16..4095.99). The base initialization selects SINC5 with a raw
+   SPI write, which the driver cache does not see, so read the live register here. */
+static int select_sinc3(void)
 {
-    uint8_t value = 0;
-    return ad7779_spi_int_reg_read(dev, reg, &value) == 0 ? value : -1;
+    unsigned i;
+    int ok = 1;
+    for (i = 0; i < 4; ++i) {
+        uint8_t value = 0;
+        if (ad7779_spi_int_reg_read(devices[i], AD7779_REG_GENERAL_USER_CONFIG_2, &value) != 0 ||
+            ((value & AD7771_FILTER_MODE) &&
+             ad7779_spi_int_reg_write(devices[i], AD7779_REG_GENERAL_USER_CONFIG_2,
+                                      (uint8_t)(value & ~AD7771_FILTER_MODE)) != 0)) {
+            adc_problem(i, AD7779_REG_GENERAL_USER_CONFIG_2, "FILTER"); ok = 0;
+        }
+    }
+    /* A filter change takes effect cleanly only after a synchronization. */
+    runtime_adc_sync();
+    return ok;
 }
 
 /* DRDY rate over 500 ms; DRDY keeps counting while streaming is paused. */
@@ -131,22 +144,15 @@ static int set_rate(uint32_t hz)
     uint16_t decimation = (uint16_t)(2048000u / hz);
     int ok = 1;
     stop_capture();
-    /* Bench (2026-10, AD7779 on this board): boot programming gives 512 Hz, but rewriting
-       N = 4000 at runtime leaves the ADCs at N = 2048 (1 kHz) until reboot. Keep the
-       boot-programmed rate when the request does not change it. */
-    if (rate_programmed && hz == rate) { settle_until = HAL_GetTick() + 20; return 1; }
     for (i = 0; i < 4; ++i) {
         ad7779_dev *dev = devices[i];
         if (ad7779_set_dec_rate(dev, decimation, 0) != 0) {
             adc_problem(i, AD7779_REG_SRC_N_MSB, "RATE_WRITE"); ok = 0;
         }
-        /* SRC_N reads back 0x0800 in the working 512 Hz state on this board, so it cannot
-           verify the rate; !CHECK measures DRDY instead. The reads are kept so the boot
-           SPI sequence that yields 512 Hz is unchanged. */
-        if (read_register(dev, AD7779_REG_SRC_N_MSB) < 0 || read_register(dev, AD7779_REG_SRC_N_LSB) < 0 ||
-            read_register(dev, AD7779_REG_SRC_IF_MSB) < 0 || read_register(dev, AD7779_REG_SRC_IF_LSB) < 0) {
-            adc_problem(i, AD7779_REG_SRC_N_MSB, "RATE_READ"); ok = 0;
-        }
+        if (!verify(dev, AD7779_REG_SRC_N_MSB, (uint8_t)(decimation >> 8), 15) ||
+            !verify(dev, AD7779_REG_SRC_N_LSB, (uint8_t)decimation, 255) ||
+            !verify(dev, AD7779_REG_SRC_IF_MSB, 0, 255) ||
+            !verify(dev, AD7779_REG_SRC_IF_LSB, 0, 255)) ok = 0;
     }
     /* Load all four SRC values using the base firmware's software update sequence. */
     for (i = 0; i < 4; ++i) {
@@ -161,7 +167,9 @@ static int set_rate(uint32_t hz)
                 AD7779_SRC_LOAD_UPDATE, 0) != 0) {
             adc_problem(i, AD7779_REG_SRC_UPDATE, "RATE_LOAD"); ok = 0;
         }
-    /* Sequential SPI loads can produce a transition interval. Discard settling data. */
+    /* Sequential SPI loads leave the four ADCs offset; a START pulse resynchronizes
+       their digital filters so all 32 channels sample together. Discard settling data. */
+    runtime_adc_sync();
     settle_until = HAL_GetTick() + 20;
     if (ok) { rate = hz; current_settings.rate = hz; }
     if (!ok) adc_fault = 1;
@@ -241,11 +249,16 @@ static void command(control_command cmd)
             (unsigned long)readback_mask); break;
     case CONTROL_CHECK: {
         unsigned i, ch;
-        uint32_t failed = 0, drdy_hz = measure_drdy_hz();
+        uint32_t failed = 0, decimation = 2048000u / rate, drdy_hz = measure_drdy_hz();
         /* All four ADCs share MCLK and SYNC; ADC1's DRDY clocks every capture. */
         int rate_ok = drdy_hz * 100u >= rate * 99u && drdy_hz * 100u <= rate * 101u;
         for (i = 0; i < 4; ++i) {
             int good = rate_ok;
+            if (readback(devices[i], AD7779_REG_SRC_N_MSB, (uint8_t)(decimation >> 8), 15) <= 0) good = 0;
+            if (readback(devices[i], AD7779_REG_SRC_N_LSB, (uint8_t)decimation, 255) <= 0) good = 0;
+            if (readback(devices[i], AD7779_REG_SRC_IF_MSB, 0, 255) <= 0) good = 0;
+            if (readback(devices[i], AD7779_REG_SRC_IF_LSB, 0, 255) <= 0) good = 0;
+            if (readback(devices[i], AD7779_REG_GENERAL_USER_CONFIG_2, 0, AD7771_FILTER_MODE) <= 0) good = 0;
             for (ch = 0; ch < 8; ++ch) {
                 unsigned gain = current_settings.gains[i * 8 + ch];
                 unsigned code = gain == 8 ? 3 : gain == 4 ? 2 : gain == 2 ? 1 : 0;
@@ -535,8 +548,7 @@ void FreeEEG32_Run(void)
     eeg_settings saved;
     reset_flags = runtime_init();
     settings_from_flash = settings_load(&saved);
-    if (!apply_settings(&saved)) streaming = 0;
-    rate_programmed = 1;
+    if (!select_sinc3() || !apply_settings(&saved)) streaming = 0;
     watchdog_init(HAL_GetTick());
     window_stamp = runtime_micros(); window_events = ready_events; window_acquired = acquired;
     for (;;) {
