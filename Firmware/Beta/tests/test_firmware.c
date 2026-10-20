@@ -118,6 +118,10 @@ int main(void)
     assert(control_feed(&local, '\n').kind == CONTROL_ERROR);
     assert(set_rate(1024)); assert(rate == 1024);
     for (i = 0; i < 4; ++i) assert(adc_devices[i].regs[96] == 7 && adc_devices[i].regs[97] == 208);
+    /* After boot programming, an unchanged rate is not rewritten (bench: rewrite breaks 512 Hz). */
+    rate_programmed = 1; adc_devices[0].regs[96] = 0;
+    assert(set_rate(1024) && rate == 1024 && adc_devices[0].regs[96] == 0);
+    rate_programmed = 0; adc_devices[0].regs[96] = 7;
     assert(ready_events == 0); FreeEEG32_DataReady(2); assert(ready_events == 0);
     FreeEEG32_DataReady(ADC1_DRDY_Pin); acquire();
     assert(receives == 4 && capturing && acquired == 0);

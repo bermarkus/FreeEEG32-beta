@@ -42,6 +42,7 @@ static uint32_t adc_fault_mask, last_fault_adc, last_fault_reg, last_fault_value
 #define FREEEEG32_STRICT_READBACK 0
 #endif
 static uint32_t readback_mask; /* ADCs whose register readback disagreed with a write. */
+static int rate_programmed; /* Set after boot has programmed the ADC rate. */
 static const char *last_fault_op = "NONE";
 #ifdef FREEEEG32_UF2_APPLICATION
 static int bootloader_after_reply;
@@ -130,6 +131,10 @@ static int set_rate(uint32_t hz)
     uint16_t decimation = (uint16_t)(2048000u / hz);
     int ok = 1;
     stop_capture();
+    /* Bench (2026-10, AD7779 on this board): boot programming gives 512 Hz, but rewriting
+       N = 4000 at runtime leaves the ADCs at N = 2048 (1 kHz) until reboot. Keep the
+       boot-programmed rate when the request does not change it. */
+    if (rate_programmed && hz == rate) { settle_until = HAL_GetTick() + 20; return 1; }
     for (i = 0; i < 4; ++i) {
         ad7779_dev *dev = devices[i];
         if (ad7779_set_dec_rate(dev, decimation, 0) != 0) {
@@ -508,6 +513,7 @@ void FreeEEG32_Run(void)
     reset_flags = runtime_init();
     settings_from_flash = settings_load(&saved);
     if (!apply_settings(&saved)) streaming = 0;
+    rate_programmed = 1;
     watchdog_init(HAL_GetTick());
     window_stamp = runtime_micros(); window_events = ready_events; window_acquired = acquired;
     for (;;) {
