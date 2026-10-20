@@ -67,22 +67,25 @@ def prepare():
                                               'void Legacy_BusFault_Handler(void)'))
 
     def adc(s):
+        # Status codes here are spi_write_and_read's: 0 = OK, -1 = error. Do not compare
+        # them with SUCCESS: ad7779.h defines SUCCESS as 1, which made every read return
+        # early without a value and kept the register cache (used by every RMW) at zero.
         # Setup previously tested an uninitialized pointer and ORed an uninitialized status.
         s = replace(s, '\tad7779_dev *dev;\n\tuint8_t i;\n\tint32_t ret;',
-                    '\tad7779_dev *dev = NULL;\n\tuint8_t i;\n\tint32_t ret = SUCCESS;')
+                    '\tad7779_dev *dev = NULL;\n\tuint8_t i;\n\tint32_t ret = 0;')
         s = replace(s, 'malloc(sizeof(*dev))', 'calloc(1, sizeof(*dev))', 2)
-        s = replace(s, '\t*reg_data = rxbuf[1];', '\tif (ret != SUCCESS) return ret;\n\t*reg_data = rxbuf[1];')
+        s = replace(s, '\t*reg_data = rxbuf[1];', '\tif (ret != 0) return ret;\n\t*reg_data = rxbuf[1];')
         s = replace(s, '  uint8_t reg_data;\n  for(uint8_t reg_addr', '  uint8_t reg_data = 0;\n  for(uint8_t reg_addr')
         s = replace(s, 'dev->dec_rate_int = dec_val;', 'dev->dec_rate_dec = dec_val;', 2)
         s = replace(s, '*dec_val = dev->dec_rate_int;', '*dec_val = dev->dec_rate_dec;')
         # The API uses thousandths; do not store the converted Q16 register value in the cache.
         s = replace(s, 'uint8_t lsb;\n\n\tif (dev->ctrl_mode == AD7779_PIN_CTRL)',
                     'uint8_t lsb;\n\tuint16_t original_dec = dec_val;\n\n'
-                    '\tif (!int_val || int_val > 4095 || dec_val > 999) return FAILURE;\n'
+                    '\tif (!int_val || int_val > 4095 || dec_val > 999) return -1;\n'
                     '\tif (dev->ctrl_mode == AD7779_PIN_CTRL)')
         s = s.replace('dev->dec_rate_dec = dec_val;', 'dev->dec_rate_dec = original_dec;')
         s = replace(s, '\tdev->cached_reg_val[reg_addr] = reg_data;',
-                    '\tif (ret == SUCCESS) dev->cached_reg_val[reg_addr] = reg_data;')
+                    '\tif (ret == 0) dev->cached_reg_val[reg_addr] = reg_data;')
         return s
     edit('Src/ad7779.c', adc)
 
