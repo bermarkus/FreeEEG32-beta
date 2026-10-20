@@ -119,8 +119,8 @@ In any serial terminal, commands start with `!` and end in CR, LF, or CRLF:
 | `!HELP` | List supported commands |
 | `!HELP SETTINGS` / `!HELP PRESETS` / `!HELP DIAG` | Usage, defaults and diagnostic units |
 | `!INFO` | Board, firmware/build identity, protocol and runtime CPU/AHB MHz |
-| `!STATUS` | Rate, complete captures, missed DRDY events, DMA errors, USB/UART drops, RX overflow and ADC fault |
-| `!CHECK` | Read back rate/gain registers on all four ADCs; report pass/fail masks and last failed ADC/register/operation |
+| `!STATUS` | Rate, complete captures, missed DRDY events, DMA errors, USB/UART drops, RX overflow, ADC fault and `readback_mask` (ADCs whose register readback disagreed with a write) |
+| `!CHECK` | Measure DRDY for 500 ms against the selected rate (`drdy_hz`, `rate_ok` within 1 %) and read back the gain registers on all four ADCs; report pass/fail masks and the last failed ADC/register/operation/value |
 | `!DIAG` | Last full streaming window's measured rates/sleep wait fraction; maximum observed capture/latency/work times; reset flags |
 | `!SETTINGS` | Current rate and all 32 gains; saved/default source and dirty flag |
 | `!PRESET DEFAULT` | Apply 512 Hz and gain 8 on all channels; unsaved |
@@ -130,12 +130,14 @@ In any serial terminal, commands start with `!` and end in CR, LF, or CRLF:
 | `!LOAD` | Apply saved rate/gains, or defaults if no valid saved record exists |
 | `!FACTORY` | Apply 512 Hz/gain 8, erase saved settings and save these defaults |
 | `!STOP` | Pause capture and output; report `was_streaming=0` or `was_streaming=1` |
-| `!RATE 512` | Set all four AD7779 SRC dividers for 512 samples/s |
-| `!RATE 1024` / `!RATE 2048` | Set 1024 / 2048 samples/s |
+| `!RATE 512` | Set all four AD7779 SRC dividers for 512 samples/s; keeps the boot-programmed rate when it is already 512 |
+| `!RATE 1024` / `!RATE 2048` | Set 1024 / 2048 samples/s. On the bench board, returning to 512 Hz afterwards needs a reboot |
 | `!GAIN 1 4` | Set channel 1 gain to 4; channels 1–32, gains 1/2/4/8 |
 | `!START` | Reply `OK START`, then resume acquisition |
 | `!REBOOT` | Reply, then reset and load the saved settings, or defaults if none |
 | `!BOOTLOADER` | In a UF2 application, reply and reset into the update drive; standalone firmware returns an installation-required error |
+| `!SPIREAD 1 17` | Bench diagnostic: raw AD7779 read frames for one register (ADC 1–4, register 0–127, decimal) plus the driver read |
+| `!SPIWRITE 1 17 100` | Bench diagnostic: one raw AD7779 register write (value 0–255, decimal); bypasses settings, verification and the driver cache |
 
 Commands are case insensitive. Every prefixed command pauses acquisition,
 including invalid commands, and replies only through USB. Start again explicitly
@@ -188,7 +190,10 @@ or during streaming.
 
 ### Efficiency, throughput and heat
 
-The default remains **80 MHz CPU / 40 MHz AHB**. WFI uses ordinary **Sleep**,
+The default remains **80 MHz CPU / 40 MHz AHB**. Idle WFI is **off by default**
+(`FREEEEG32_IDLE_WFI=0`, `!INFO` reports `idle=spin`): on the bench board the core
+stayed in WFI with enabled USB/EXTI interrupts pending. Build with
+`-DFREEEEG32_IDLE_WFI=1` to test it. When enabled, WFI uses ordinary **Sleep**,
 with acquisition, USB, UART, DMA and SysTick clocks retained. Stop/Standby and
 tick suspension are not used. An IRQ-masked work check prevents sleeping over
 queued RX, an outstanding DRDY or completed DMA; a newly pending IRQ wakes WFI

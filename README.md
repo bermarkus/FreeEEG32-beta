@@ -158,7 +158,7 @@ board. Recovery from firmware that blocks SWD needs a probe with working STM32 N
 | Hang recovery | Main-loop watchdog; reset reason and ADC fault details in diagnostics |
 | CPU clock selection | 40/80/160/240/320/400/480 MHz build profiles; 80 MHz default |
 | Acquisition and transfer fixes | Eight-word ADC DMA reads, timeouts, USB frame buffering, batching and drop counters |
-| CPU idle sleep | DMA, acquisition and USB clocks continue while the CPU waits for interrupts |
+| CPU idle sleep | Optional build setting, off by default; DMA, acquisition and USB clocks continue while the CPU waits for interrupts |
 | Update recovery | Board/layout checks, image CRC verification and staged installation with retry after interrupted writes |
 
 Sample rate is independent of the CPU clock profile. The 480 MHz profile requires
@@ -166,8 +166,11 @@ revision V silicon and falls back to 400 MHz on other revisions. Use USB for
 complete streams above 512 Hz; UART bandwidth is limited.
 [Clock profiles](Firmware/UF2/README.md#cpu-clock-profiles)
 
-**Hardware status:** firmware builds and host simulations pass. Physical flashing,
-USB enumeration, ADC timing, sustained throughput and temperatures still need board testing.
+**Hardware status:** firmware builds and host simulations pass. One board
+(STM32H743 rev V, Windows 11) has been bench-tested at 512 Hz: SWD flashing with
+an STLINK-V3MINIE, USB enumeration and replug, UF2 updates, `Check my board` and a
+10 s test recording (511.9 Hz, no missing frames or DMA errors). Other rates,
+sustained throughput, temperatures and other boards still need testing.
 
 ## Why ROM DFU cannot use this USB connector
 
