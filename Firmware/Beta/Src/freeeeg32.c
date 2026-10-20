@@ -342,7 +342,7 @@ static void acquire(void)
             __DMB();
             capturing = 0;
             for (i = 0; i < 4; ++i) {
-                if (HAL_SAI_GetError(sais[i])) error = 1;
+                if (HAL_SAI_GetError(sais[i]) & ~(uint32_t)(HAL_SAI_ERROR_AFSDET | HAL_SAI_ERROR_LFSDET)) error = 1;
                 /* Normal DMA completion leaves SAI enabled. Stop and flush its FIFO
                    before the next DRDY so old words cannot become the next frame. */
                 if (HAL_SAI_DMAStop(sais[i]) != HAL_OK) error = 1;
@@ -365,8 +365,17 @@ static void acquire(void)
     if (now - stamp > max_latency_us) max_latency_us = now - stamp;
     capture_started = HAL_GetTick(); capturing = 1;
     for (i = 0; i < 4; ++i) {
+        int started;
+        primask = __get_PRIMASK();
+        __disable_irq();
         /* Count words, never SAI_DATASIZE_32 (which is a register bitmask = 224). */
-        if (HAL_SAI_Receive_DMA(sais[i], (uint8_t *)samples[i], 8) != HAL_OK) {
+        started = HAL_SAI_Receive_DMA(sais[i], (uint8_t *)samples[i], 8);
+        /* Slave RX DMA enables frame-sync error IRQs, and the HAL aborts the DMA on them.
+           DCLK runs between DRDY frames, so FS is always "late" for a 256-bit frame. */
+        __HAL_SAI_DISABLE_IT(sais[i], SAI_IT_AFSDET | SAI_IT_LFSDET);
+        __HAL_SAI_CLEAR_FLAG(sais[i], SAI_FLAG_AFSDET | SAI_FLAG_LFSDET);
+        __set_PRIMASK(primask);
+        if (started != HAL_OK) {
             ++dma_errors; stop_capture(); break;
         }
     }
