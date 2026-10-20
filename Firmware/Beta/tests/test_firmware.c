@@ -14,13 +14,17 @@ ad7779_dev *devices[4] = { &adc_devices[0], &adc_devices[1], &adc_devices[2], &a
 USBD_HandleTypeDef hUsbDeviceHS;
 static USBD_CDC_HandleTypeDef test_cdc;
 static unsigned tick, receives, usb_frames, stops, fail_receive, fail_read;
-static int fail_adc = -1;
+static int fail_adc = -1, corrupt_adc = -1;
 static uint8_t transmitted[2048], settings_memory[SETTINGS_BYTES];
 static uint32_t micros, sleeping, wake_dma, wake_drdy, usb_busy, transmitted_length;
 uint32_t test_primask;
 uint32_t runtime_init(void) { return 0x12340000; }
 uint32_t runtime_micros(void) { return micros; }
 void runtime_sleep(void) { assert(test_primask == 1); ++sleeping; micros += 20; }
+int runtime_adc_spi_raw(unsigned adc, uint8_t *tx, uint8_t *rx, uint8_t length)
+{ unsigned i; assert(adc < 4 && length <= 3); for (i = 0; i < length; ++i) rx[i] = (uint8_t)(tx[0] + i); return 0; }
+static unsigned adc_syncs;
+void runtime_adc_sync(void) { ++adc_syncs; }
 int runtime_watchdog_start(void) { return 1; }
 void runtime_watchdog_feed(void) { }
 void test_set_primask(uint32_t mask)
@@ -40,7 +44,8 @@ uint32_t HAL_GetREVID(void) { return 0x2003; }
 uint32_t HAL_RCC_GetHCLKFreq(void) { return 40000000u; }
 
 uint32_t HAL_GetTick(void) { return tick; }
-void HAL_Delay(uint32_t delay) { tick += delay; micros += delay * 1000; }
+static uint32_t simulated_drdy_hz; /* DRDY events generated while HAL_Delay runs */
+void HAL_Delay(uint32_t delay) { tick += delay; micros += delay * 1000; ready_events += delay * simulated_drdy_hz / 1000; }
 int HAL_SAI_DMAStop(SAI_HandleTypeDef *sai) { ++stops; sai->state = 0; return 0; }
 int HAL_SAI_GetState(SAI_HandleTypeDef *sai) { return sai->state; }
 uint32_t HAL_SAI_GetError(SAI_HandleTypeDef *sai) { (void)sai; return 0; }
@@ -60,9 +65,15 @@ int HAL_UART_Transmit_DMA(UART_HandleTypeDef *uart, uint8_t *buffer, uint16_t le
 uint8_t CDC_Transmit_HS(uint8_t *buffer, uint16_t length)
 { if (usb_busy || test_cdc.TxState) return USBD_BUSY; assert(length <= sizeof(transmitted)); memcpy(transmitted, buffer, length); transmitted_length = length; ++usb_frames; return USBD_OK; }
 int ad7779_spi_int_reg_read(ad7779_dev *dev, uint8_t reg, uint8_t *value)
-{ if (fail_read || (fail_adc >= 0 && dev == &adc_devices[fail_adc])) return -1; *value = dev->regs[reg]; return 0; }
+{
+    if (fail_read || (fail_adc >= 0 && dev == &adc_devices[fail_adc])) return -1;
+    *value = corrupt_adc >= 0 && dev == &adc_devices[corrupt_adc] ? 0 : dev->regs[reg]; /* simulated mismatch */
+    return 0;
+}
 int ad7779_spi_int_reg_write_mask(ad7779_dev *dev, uint8_t reg, uint8_t mask, uint8_t value)
 { dev->regs[reg] = (dev->regs[reg] & ~mask) | value; return 0; }
+int ad7779_spi_int_reg_write(ad7779_dev *dev, uint8_t reg, uint8_t value)
+{ dev->regs[reg] = value; return 0; }
 int ad7779_set_dec_rate(ad7779_dev *dev, uint16_t integer, uint16_t fractional)
 {
     assert(fractional == 0);
@@ -91,6 +102,11 @@ int main(void)
     assert(line("!RATE 512junk\n").kind == CONTROL_ERROR);
     assert(line("!RATE 99999999999999\n").kind == CONTROL_ERROR);
     assert(line("!GAIN 32 8\n").kind == CONTROL_GAIN);
+    assert(line("!SPIREAD 1 17\n").kind == CONTROL_SPIREAD);
+    assert(line("!SPIREAD 5 17\n").kind == CONTROL_ERROR && line("!SPIREAD 1 128\n").kind == CONTROL_ERROR);
+    assert(line("!SPIREAD 4 8\n").kind == CONTROL_SPIREAD && line("!GAIN 4 3\n").kind == CONTROL_ERROR);
+    assert(line("!SPIWRITE 1 17 64\n").kind == CONTROL_SPIWRITE && line("!SPIWRITE 1 17 256\n").kind == CONTROL_ERROR);
+    assert(line("!SPIWRITE 1 17 64\n").third == 64 && line("!GAIN 1 8 1\n").kind == CONTROL_ERROR);
     assert(line("!GAIN 0 8\n").kind == CONTROL_ERROR);
     assert(line("!GAIN 33 1\n").kind == CONTROL_ERROR);
     assert(line("!GAIN 1 3\n").kind == CONTROL_ERROR);
@@ -111,8 +127,13 @@ int main(void)
     control_feed(&local, '!');
     for (i = 0; i < 200; ++i) control_feed(&local, 'A');
     assert(control_feed(&local, '\n').kind == CONTROL_ERROR);
-    assert(set_rate(1024)); assert(rate == 1024);
+    { unsigned syncs = adc_syncs;
+    assert(set_rate(1024)); assert(rate == 1024 && adc_syncs == syncs + 1); }
     for (i = 0; i < 4; ++i) assert(adc_devices[i].regs[96] == 7 && adc_devices[i].regs[97] == 208);
+    /* AD7771 SINC5 (FILTER_MODE) cannot reach 512 Hz; boot selects SINC3 and resyncs. */
+    for (i = 0; i < 4; ++i) adc_devices[i].regs[18] = 0x49;
+    { unsigned syncs = adc_syncs; assert(select_sinc3() && adc_syncs == syncs + 1); }
+    for (i = 0; i < 4; ++i) assert(adc_devices[i].regs[18] == 0x09);
     assert(ready_events == 0); FreeEEG32_DataReady(2); assert(ready_events == 0);
     FreeEEG32_DataReady(ADC1_DRDY_Pin); acquire();
     assert(receives == 4 && capturing && acquired == 0);
@@ -182,16 +203,33 @@ int main(void)
     wake_dma = 1; idle_if_possible(); assert(sleeping == 3);
     idle_if_possible(); assert(sleeping == 3);
     acquire(); assert(!capturing); pump_usb();
+    simulated_drdy_hz = 0; /* No DRDY: the measured rate fails every ADC. */
+    command(line("!CHECK\n")); assert(strstr(reply, "adc_ok_mask=0x0 adc_failed_mask=0xf") && strstr(reply, "drdy_hz=0 rate_ok=0"));
+    simulated_drdy_hz = rate;
     command(line("!CHECK\n")); assert(strstr(reply, "adc_ok_mask=0xf adc_failed_mask=0x0 adc_fault=0"));
+    assert(strstr(reply, "rate_ok=1"));
+    {
+        /* A successful read with the wrong value is reported, but does not stop acquisition. */
+        unsigned gain8 = current_settings.gains[8];
+        corrupt_adc = 1;
+        command(line("!CHECK\n")); assert(strstr(reply, "adc_ok_mask=0xd adc_failed_mask=0x2 adc_fault=0"));
+        assert(strstr(reply, "readback_mask=0x2"));
+        assert(set_gain(8, 4) && !adc_fault && current_settings.gains[8] == 4);
+        corrupt_adc = -1; assert(set_gain(8, gain8)); readback_mask = 0;
+    }
     fail_adc = 2;
     command(line("!CHECK\n")); assert(strstr(reply, "adc_ok_mask=0xb adc_failed_mask=0x4 adc_fault=1"));
     assert(strstr(reply, "last_adc=3") && strstr(reply, "last_op=READBACK"));
     fail_adc = -1;
     command(line("!CHECK\n")); assert(strstr(reply, "adc_ok_mask=0xf adc_failed_mask=0x0 adc_fault=1"));
+    simulated_drdy_hz = 0; seen_events = ready_events;
     streaming = 1; command(line("!STOP\n")); assert(strstr(reply, "was_streaming=1"));
     command(line("!STOP\n")); assert(strstr(reply, "was_streaming=0"));
     watchdog_init(HAL_GetTick()); assert(watchdog_active());
     fail_read = 1; assert(!set_rate(2048) && adc_fault);
+    command(line("!SPIREAD 2 17\n"));
+    assert(strstr(reply, "adc=2 reg=0x11 f1=91,92 f2=91,92 f3=91,92,93 status=0,0,0 driver=") && reply_length < sizeof(reply));
+    command(line("!SPIWRITE 3 17 64\n")); assert(strstr(reply, "adc=3 reg=0x11 value=0x40 rx=11,12 status=0"));
     command(line("!INFO\n")); assert(strstr(reply, "cpu_mhz=80 ahb_mhz=40"));
     assert(strstr(reply, "build=" FREEEEG32_BUILD_TAG) && reply_length < sizeof(reply));
     assert(strstr(reply, "watchdog=IWDG1"));

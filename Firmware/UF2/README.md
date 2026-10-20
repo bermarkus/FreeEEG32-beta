@@ -12,8 +12,10 @@ without rebuilding. **4** compiles your current edited source, then flashes the 
 combined HEX. For later application changes, choose **2** to build, then **5** to
 update over USB while keeping the installed loader.
 
-**Hardware status:** ARM GCC builds and host tests pass. USB enumeration,
-electrical timing and power-loss recovery still need physical board testing.
+**Hardware status:** ARM GCC builds and host tests pass. On one bench board
+(STM32H743 rev V), the UF2 loader enumerated and installed several application
+updates with build-ID verification. Power-loss recovery and other boards still
+need physical testing.
 
 **Quick commands:** [Windows](../../Flash/Windows/README.md) ·
 [Linux](../../Flash/Linux/README.md). Named launchers are in the top-level

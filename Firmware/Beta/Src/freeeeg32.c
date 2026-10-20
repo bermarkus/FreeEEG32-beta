@@ -37,8 +37,11 @@ static uint32_t window_stamp, window_events, window_acquired, window_wait_us;
 static uint32_t measured_drdy_millihz, measured_capture_millihz, measured_wait_permille, measured_window_us;
 static uint32_t sleep_entries;
 static int capturing, streaming = 1, start_after_reply, reboot_after_reply, adc_fault;
-static uint32_t adc_fault_mask, last_fault_adc, last_fault_reg;
-static const char *last_fault_op = "NONE";
+static uint32_t adc_fault_mask, last_fault_adc, last_fault_reg, last_fault_value;
+#ifndef FREEEEG32_STRICT_READBACK
+#define FREEEEG32_STRICT_READBACK 0
+#endif
+static uint32_t readback_mask; /* ADCs whose register readback disagreed with a write. */static const char *last_fault_op = "NONE";
 #ifdef FREEEEG32_UF2_APPLICATION
 static int bootloader_after_reply;
 #endif
@@ -79,14 +82,59 @@ static void adc_problem(unsigned adc, uint8_t reg, const char *operation)
     last_fault_adc = adc + 1; last_fault_reg = reg; last_fault_op = operation;
 }
 
-static int verify(ad7779_dev *dev, uint8_t reg, uint8_t expected, uint8_t mask)
+/* 1 = matches; 0 = read succeeded but disagrees; -1 = SPI read failed. */
+static int readback(ad7779_dev *dev, uint8_t reg, uint8_t expected, uint8_t mask)
 {
     uint8_t actual = 0;
     unsigned i;
-    int ok = ad7779_spi_int_reg_read(dev, reg, &actual) == 0 &&
-             (actual & mask) == (expected & mask);
-    if (!ok) for (i = 0; i < 4; ++i) if (devices[i] == dev) adc_problem(i, reg, "READBACK");
+    int read_ok = ad7779_spi_int_reg_read(dev, reg, &actual) == 0;
+    int match = read_ok && (actual & mask) == (expected & mask);
+    if (!match) for (i = 0; i < 4; ++i) if (devices[i] == dev) {
+        if (read_ok && !FREEEEG32_STRICT_READBACK) {
+            readback_mask |= 1u << i;
+            last_fault_adc = i + 1; last_fault_reg = reg; last_fault_op = "READBACK";
+            last_fault_value = actual;
+        } else adc_problem(i, reg, "READBACK");
+    }
+    return match ? 1 : read_ok ? 0 : -1;
+}
+
+/* A mismatch is reported in readback_mask. Only SPI errors stop acquisition, unless
+   built with FREEEEG32_STRICT_READBACK=1. !CHECK always reports the true readback. */
+static int verify(ad7779_dev *dev, uint8_t reg, uint8_t expected, uint8_t mask)
+{
+    int result = readback(dev, reg, expected, mask);
+    return result > 0 || (result == 0 && !FREEEEG32_STRICT_READBACK);
+}
+
+/* The ADCs are AD7771 (BOM: AD7771BCPZ). Its SINC5 filter limits the decimation to
+   16..2048, i.e. at least 1 kHz from the 2.048 MHz high-resolution modulator, so 512 Hz
+   needs the SINC3 filter (16..4095.99). The base initialization selects SINC5 with a raw
+   SPI write, which the driver cache does not see, so read the live register here. */
+static int select_sinc3(void)
+{
+    unsigned i;
+    int ok = 1;
+    for (i = 0; i < 4; ++i) {
+        uint8_t value = 0;
+        if (ad7779_spi_int_reg_read(devices[i], AD7779_REG_GENERAL_USER_CONFIG_2, &value) != 0 ||
+            ((value & AD7771_FILTER_MODE) &&
+             ad7779_spi_int_reg_write(devices[i], AD7779_REG_GENERAL_USER_CONFIG_2,
+                                      (uint8_t)(value & ~AD7771_FILTER_MODE)) != 0)) {
+            adc_problem(i, AD7779_REG_GENERAL_USER_CONFIG_2, "FILTER"); ok = 0;
+        }
+    }
+    /* A filter change takes effect cleanly only after a synchronization. */
+    runtime_adc_sync();
     return ok;
+}
+
+/* DRDY rate over 500 ms; DRDY keeps counting while streaming is paused. */
+static uint32_t measure_drdy_hz(void)
+{
+    uint32_t before = ready_events;
+    HAL_Delay(500);
+    return (ready_events - before) * 2u;
 }
 
 static int set_rate(uint32_t hz)
@@ -119,7 +167,9 @@ static int set_rate(uint32_t hz)
                 AD7779_SRC_LOAD_UPDATE, 0) != 0) {
             adc_problem(i, AD7779_REG_SRC_UPDATE, "RATE_LOAD"); ok = 0;
         }
-    /* Sequential SPI loads can produce a transition interval. Discard settling data. */
+    /* Sequential SPI loads leave the four ADCs offset; a START pulse resynchronizes
+       their digital filters so all 32 channels sample together. Discard settling data. */
+    runtime_adc_sync();
     settle_until = HAL_GetTick() + 20;
     if (ok) { rate = hz; current_settings.rate = hz; }
     if (!ok) adc_fault = 1;
@@ -180,40 +230,46 @@ static void command(control_command cmd)
         break;
     case CONTROL_INFO:
 #ifdef FREEEEG32_UF2_APPLICATION
-        snprintf(reply, sizeof(reply), "OK INFO FreeEEG32-beta " FREEEEG32_VERSION " STM32H743 32ch CDC protocol=1 update=UF2 settings=flash-explicit-save idle=WFI usb_queue=16 cpu_mhz=%lu ahb_mhz=%lu requested_mhz=%u silicon_rev=0x%04lx build=%s watchdog=%s watchdog_nominal_ms=32768\r\n",
+        snprintf(reply, sizeof(reply), "OK INFO FreeEEG32-beta " FREEEEG32_VERSION " STM32H743 32ch CDC protocol=1 update=UF2 settings=flash-explicit-save idle=" FREEEEG32_IDLE_NAME " usb_queue=16 cpu_mhz=%lu ahb_mhz=%lu requested_mhz=%u silicon_rev=0x%04lx build=%s watchdog=%s watchdog_nominal_ms=32768\r\n",
             (unsigned long)(SystemCoreClock / 1000000u), (unsigned long)(HAL_RCC_GetHCLKFreq() / 1000000u),
             (unsigned)FREEEEG32_CPU_MHZ, (unsigned long)HAL_GetREVID(), FREEEEG32_BUILD_TAG, watchdog_active() ? "IWDG1" : "not-started");
 #else
-        snprintf(reply, sizeof(reply), "OK INFO FreeEEG32-beta " FREEEEG32_VERSION " STM32H743 32ch CDC protocol=1 update=SWD settings=flash-explicit-save idle=WFI usb_queue=16 cpu_mhz=%lu ahb_mhz=%lu requested_mhz=%u silicon_rev=0x%04lx build=%s watchdog=%s watchdog_nominal_ms=32768\r\n",
+        snprintf(reply, sizeof(reply), "OK INFO FreeEEG32-beta " FREEEEG32_VERSION " STM32H743 32ch CDC protocol=1 update=SWD settings=flash-explicit-save idle=" FREEEEG32_IDLE_NAME " usb_queue=16 cpu_mhz=%lu ahb_mhz=%lu requested_mhz=%u silicon_rev=0x%04lx build=%s watchdog=%s watchdog_nominal_ms=32768\r\n",
             (unsigned long)(SystemCoreClock / 1000000u), (unsigned long)(HAL_RCC_GetHCLKFreq() / 1000000u),
             (unsigned)FREEEEG32_CPU_MHZ, (unsigned long)HAL_GetREVID(), FREEEEG32_BUILD_TAG, watchdog_active() ? "IWDG1" : "not-started");
 #endif
         break;
     case CONTROL_STATUS:
-        snprintf(reply, sizeof(reply), "OK STATUS rate=%lu acquired=%lu missed=%lu dma_errors=%lu usb_dropped=%lu uart_dropped=%lu rx_dropped=%lu adc_fault=%d streaming=0 usb_queued=%lu usb_high_water=%lu control_discarded=%lu adc_fault_mask=0x%lx last_adc=%lu last_reg=0x%02lx last_op=%s uptime_ms=%lu\r\n",
+        snprintf(reply, sizeof(reply), "OK STATUS rate=%lu acquired=%lu missed=%lu dma_errors=%lu usb_dropped=%lu uart_dropped=%lu rx_dropped=%lu adc_fault=%d streaming=0 usb_queued=%lu usb_high_water=%lu control_discarded=%lu adc_fault_mask=0x%lx last_adc=%lu last_reg=0x%02lx last_op=%s uptime_ms=%lu readback_mask=0x%lx\r\n",
             (unsigned long)rate, (unsigned long)acquired, (unsigned long)missed,
             (unsigned long)dma_errors, (unsigned long)usb_dropped, (unsigned long)uart_dropped,
             (unsigned long)rx_dropped, adc_fault, (unsigned long)(usb_head - usb_tail),
             (unsigned long)usb_high_water, (unsigned long)control_discarded, (unsigned long)adc_fault_mask,
-            (unsigned long)last_fault_adc, (unsigned long)last_fault_reg, last_fault_op, (unsigned long)HAL_GetTick()); break;
+            (unsigned long)last_fault_adc, (unsigned long)last_fault_reg, last_fault_op, (unsigned long)HAL_GetTick(),
+            (unsigned long)readback_mask); break;
     case CONTROL_CHECK: {
         unsigned i, ch;
-        uint32_t failed = 0, decimation = 2048000u / rate;
+        uint32_t failed = 0, decimation = 2048000u / rate, drdy_hz = measure_drdy_hz();
+        /* All four ADCs share MCLK and SYNC; ADC1's DRDY clocks every capture. */
+        int rate_ok = drdy_hz * 100u >= rate * 99u && drdy_hz * 100u <= rate * 101u;
         for (i = 0; i < 4; ++i) {
-            int good = verify(devices[i], AD7779_REG_SRC_N_MSB, (uint8_t)(decimation >> 8), 15);
-            if (!verify(devices[i], AD7779_REG_SRC_N_LSB, (uint8_t)decimation, 255)) good = 0;
-            if (!verify(devices[i], AD7779_REG_SRC_IF_MSB, 0, 255)) good = 0;
-            if (!verify(devices[i], AD7779_REG_SRC_IF_LSB, 0, 255)) good = 0;
+            int good = rate_ok;
+            if (readback(devices[i], AD7779_REG_SRC_N_MSB, (uint8_t)(decimation >> 8), 15) <= 0) good = 0;
+            if (readback(devices[i], AD7779_REG_SRC_N_LSB, (uint8_t)decimation, 255) <= 0) good = 0;
+            if (readback(devices[i], AD7779_REG_SRC_IF_MSB, 0, 255) <= 0) good = 0;
+            if (readback(devices[i], AD7779_REG_SRC_IF_LSB, 0, 255) <= 0) good = 0;
+            if (readback(devices[i], AD7779_REG_GENERAL_USER_CONFIG_2, 0, AD7771_FILTER_MODE) <= 0) good = 0;
             for (ch = 0; ch < 8; ++ch) {
                 unsigned gain = current_settings.gains[i * 8 + ch];
                 unsigned code = gain == 8 ? 3 : gain == 4 ? 2 : gain == 2 ? 1 : 0;
-                if (!verify(devices[i], AD7779_REG_CH_CONFIG(ch), (uint8_t)(code << 6), 0xc0)) good = 0;
+                if (readback(devices[i], AD7779_REG_CH_CONFIG(ch), (uint8_t)(code << 6), 0xc0) <= 0) good = 0;
             }
             if (!good) failed |= 1u << i;
         }
-        snprintf(reply, sizeof(reply), "OK CHECK adc_ok_mask=0x%lx adc_failed_mask=0x%lx adc_fault=%d last_adc=%lu last_reg=0x%02lx last_op=%s\r\n",
+        snprintf(reply, sizeof(reply), "OK CHECK adc_ok_mask=0x%lx adc_failed_mask=0x%lx adc_fault=%d last_adc=%lu last_reg=0x%02lx last_op=%s readback_mask=0x%lx drdy_hz=%lu rate_ok=%d last_value=0x%02lx\r\n",
             (unsigned long)(15u & ~failed), (unsigned long)failed, adc_fault,
-            (unsigned long)last_fault_adc, (unsigned long)last_fault_reg, last_fault_op);
+            (unsigned long)last_fault_adc, (unsigned long)last_fault_reg, last_fault_op,
+            (unsigned long)readback_mask, (unsigned long)drdy_hz, rate_ok, (unsigned long)last_fault_value);
         break;
     }
     case CONTROL_DIAG:
@@ -276,6 +332,29 @@ static void command(control_command cmd)
         ok = set_gain(cmd.first - 1, cmd.second); settings_dirty = 1;
         snprintf(reply, sizeof(reply), ok ? "OK GAIN %lu %lu\r\n" : "ERR GAIN SPI/readback; stream stopped\r\n",
                  (unsigned long)cmd.first, (unsigned long)cmd.second);
+        break;
+    }
+    case CONTROL_SPIREAD: {
+        /* Raw read frames for one register: 2-byte, 2-byte again (shows a reply that arrives
+           one frame late), then 3-byte. Every received byte is reported. */
+        uint8_t tx[3] = { (uint8_t)(0x80u | cmd.second), 0, 0 }, a[3] = {0}, b[3] = {0}, c[3] = {0};
+        unsigned adc = cmd.first - 1;
+        int ra = runtime_adc_spi_raw(adc, tx, a, 2);
+        int rb = runtime_adc_spi_raw(adc, tx, b, 2);
+        int rc = runtime_adc_spi_raw(adc, tx, c, 3);
+        uint8_t driver_value = 0;
+        int rd = ad7779_spi_int_reg_read(devices[adc], (uint8_t)cmd.second, &driver_value);
+        snprintf(reply, sizeof(reply), "OK SPIREAD adc=%lu reg=0x%02lx f1=%02x,%02x f2=%02x,%02x f3=%02x,%02x,%02x status=%d,%d,%d driver=%02x,%d\r\n",
+            (unsigned long)cmd.first, (unsigned long)cmd.second, a[0], a[1], b[0], b[1], c[0], c[1], c[2], ra, rb, rc,
+            driver_value, rd);
+        break;
+    }
+    case CONTROL_SPIWRITE: {
+        /* Raw write for bench diagnosis; bypasses settings, verification and caches. */
+        uint8_t tx[2] = { (uint8_t)(cmd.second & 0x7fu), (uint8_t)cmd.third }, rx[2] = {0};
+        int status = runtime_adc_spi_raw(cmd.first - 1, tx, rx, 2);
+        snprintf(reply, sizeof(reply), "OK SPIWRITE adc=%lu reg=0x%02lx value=0x%02lx rx=%02x,%02x status=%d\r\n",
+            (unsigned long)cmd.first, (unsigned long)cmd.second, (unsigned long)cmd.third, rx[0], rx[1], status);
         break;
     }
     case CONTROL_REBOOT:
@@ -342,7 +421,7 @@ static void acquire(void)
             __DMB();
             capturing = 0;
             for (i = 0; i < 4; ++i) {
-                if (HAL_SAI_GetError(sais[i])) error = 1;
+                if (HAL_SAI_GetError(sais[i]) & ~(uint32_t)(HAL_SAI_ERROR_AFSDET | HAL_SAI_ERROR_LFSDET)) error = 1;
                 /* Normal DMA completion leaves SAI enabled. Stop and flush its FIFO
                    before the next DRDY so old words cannot become the next frame. */
                 if (HAL_SAI_DMAStop(sais[i]) != HAL_OK) error = 1;
@@ -365,8 +444,17 @@ static void acquire(void)
     if (now - stamp > max_latency_us) max_latency_us = now - stamp;
     capture_started = HAL_GetTick(); capturing = 1;
     for (i = 0; i < 4; ++i) {
+        int started;
+        primask = __get_PRIMASK();
+        __disable_irq();
         /* Count words, never SAI_DATASIZE_32 (which is a register bitmask = 224). */
-        if (HAL_SAI_Receive_DMA(sais[i], (uint8_t *)samples[i], 8) != HAL_OK) {
+        started = HAL_SAI_Receive_DMA(sais[i], (uint8_t *)samples[i], 8);
+        /* Slave RX DMA enables frame-sync error IRQs, and the HAL aborts the DMA on them.
+           DCLK runs between DRDY frames, so FS is always "late" for a 256-bit frame. */
+        __HAL_SAI_DISABLE_IT(sais[i], SAI_IT_AFSDET | SAI_IT_LFSDET);
+        __HAL_SAI_CLEAR_FLAG(sais[i], SAI_FLAG_AFSDET | SAI_FLAG_LFSDET);
+        __set_PRIMASK(primask);
+        if (started != HAL_OK) {
             ++dma_errors; stop_capture(); break;
         }
     }
@@ -460,7 +548,7 @@ void FreeEEG32_Run(void)
     eeg_settings saved;
     reset_flags = runtime_init();
     settings_from_flash = settings_load(&saved);
-    if (!apply_settings(&saved)) streaming = 0;
+    if (!select_sinc3() || !apply_settings(&saved)) streaming = 0;
     watchdog_init(HAL_GetTick());
     window_stamp = runtime_micros(); window_events = ready_events; window_acquired = acquired;
     for (;;) {

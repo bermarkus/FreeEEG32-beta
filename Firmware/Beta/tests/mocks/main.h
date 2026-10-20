@@ -13,6 +13,14 @@ int HAL_SAI_DMAStop(SAI_HandleTypeDef *sai);
 int HAL_SAI_GetState(SAI_HandleTypeDef *sai);
 uint32_t HAL_SAI_GetError(SAI_HandleTypeDef *sai);
 int HAL_SAI_Receive_DMA(SAI_HandleTypeDef *sai, uint8_t *buffer, uint16_t words);
+#define HAL_SAI_ERROR_AFSDET 0x4u
+#define HAL_SAI_ERROR_LFSDET 0x8u
+#define SAI_IT_AFSDET 0x20u
+#define SAI_IT_LFSDET 0x40u
+#define SAI_FLAG_AFSDET 0x20u
+#define SAI_FLAG_LFSDET 0x40u
+#define __HAL_SAI_DISABLE_IT(sai, it) ((void)(sai), (void)(it))
+#define __HAL_SAI_CLEAR_FLAG(sai, flag) ((void)(sai), (void)(flag))
 int HAL_UART_GetState(UART_HandleTypeDef *uart);
 int HAL_UART_Transmit_DMA(UART_HandleTypeDef *uart, uint8_t *buffer, uint16_t size);
 uint32_t HAL_GetTick(void);

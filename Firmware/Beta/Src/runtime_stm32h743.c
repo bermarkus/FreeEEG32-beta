@@ -1,5 +1,8 @@
 #include "stm32h7xx_hal.h"
 #include "runtime.h"
+#include "main.h"
+#include "ad7779.h"
+#include "platform_drivers.h"
 #ifdef FREEEEG32_UF2_APPLICATION
 #include "boot_request.h"
 #endif
@@ -22,7 +25,9 @@ uint32_t runtime_init(void)
        is added: existing DRDY, DMA, USB, UART and SysTick IRQs wake the core. */
     __HAL_RCC_DMA1_CLK_SLEEP_ENABLE(); __HAL_RCC_DMA2_CLK_SLEEP_ENABLE();
     __HAL_RCC_SAI1_CLK_SLEEP_ENABLE(); __HAL_RCC_SAI2_CLK_SLEEP_ENABLE();
-    __HAL_RCC_USB2_OTG_FS_CLK_SLEEP_ENABLE(); __HAL_RCC_USART1_CLK_SLEEP_ENABLE();
+    /* USB is OTG_HS (USB1) with the embedded FS PHY; the absent ULPI PHY clock must be off in Sleep. */
+    __HAL_RCC_USB1_OTG_HS_CLK_SLEEP_ENABLE(); __HAL_RCC_USB1_OTG_HS_ULPI_CLK_SLEEP_DISABLE();
+    __HAL_RCC_USART1_CLK_SLEEP_ENABLE();
     __HAL_RCC_TIM2_CLK_ENABLE(); __HAL_RCC_TIM2_CLK_SLEEP_ENABLE();
     /* All supported profiles use APB1 /2 with TIMPRE=0: timer clock = 2*PCLK1. */
     TIM2->CR1 = 0; TIM2->PSC = (2u * HAL_RCC_GetPCLK1Freq() / 1000000u) - 1u;
@@ -31,7 +36,37 @@ uint32_t runtime_init(void)
     return flags;
 }
 uint32_t runtime_micros(void) { return TIM2->CNT; }
-void runtime_sleep(void) { __DSB(); __WFI(); }
+/* Same low-high-low START sequence as the base initialization, with shorter phases. */
+void runtime_adc_sync(void)
+{
+    static GPIO_TypeDef *const ports[] = { ADC1_START_GPIO_Port, ADC2_START_GPIO_Port,
+                                           ADC3_START_GPIO_Port, ADC4_START_GPIO_Port };
+    static const uint16_t pins[] = { ADC1_START_Pin, ADC2_START_Pin, ADC3_START_Pin, ADC4_START_Pin };
+    unsigned i;
+    for (i = 0; i < 4; ++i) HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_RESET);
+    HAL_Delay(1);
+    for (i = 0; i < 4; ++i) HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_SET);
+    HAL_Delay(1);
+    for (i = 0; i < 4; ++i) HAL_GPIO_WritePin(ports[i], pins[i], GPIO_PIN_RESET);
+    HAL_Delay(1);
+}
+
+int runtime_adc_spi_raw(unsigned adc, uint8_t *tx, uint8_t *rx, uint8_t length)
+{
+    extern ad7779_dev *devices[4];
+    ad7779_dev *dev = adc < 4 ? devices[adc] : NULL;
+    if (!dev) return -1;
+    return spi_write_and_read(dev->spi_dev.dev, dev->spi_dev.chip_select_port,
+                              dev->spi_dev.chip_select_pin, tx, rx, length);
+}
+
+/* FREEEEG32_IDLE_WFI defaults to 0 in runtime.h. */
+void runtime_sleep(void)
+{
+#if FREEEEG32_IDLE_WFI
+    __DSB(); __WFI();
+#endif
+}
 
 /* Register sequence follows ST's H7 IWDG driver. The peripheral/LSI continue
  * during ordinary Sleep. No IRQ feeds it and no option bytes are changed.

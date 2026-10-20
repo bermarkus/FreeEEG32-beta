@@ -67,22 +67,25 @@ def prepare():
                                               'void Legacy_BusFault_Handler(void)'))
 
     def adc(s):
+        # Status codes here are spi_write_and_read's: 0 = OK, -1 = error. Do not compare
+        # them with SUCCESS: ad7779.h defines SUCCESS as 1, which made every read return
+        # early without a value and kept the register cache (used by every RMW) at zero.
         # Setup previously tested an uninitialized pointer and ORed an uninitialized status.
         s = replace(s, '\tad7779_dev *dev;\n\tuint8_t i;\n\tint32_t ret;',
-                    '\tad7779_dev *dev = NULL;\n\tuint8_t i;\n\tint32_t ret = SUCCESS;')
+                    '\tad7779_dev *dev = NULL;\n\tuint8_t i;\n\tint32_t ret = 0;')
         s = replace(s, 'malloc(sizeof(*dev))', 'calloc(1, sizeof(*dev))', 2)
-        s = replace(s, '\t*reg_data = rxbuf[1];', '\tif (ret != SUCCESS) return ret;\n\t*reg_data = rxbuf[1];')
+        s = replace(s, '\t*reg_data = rxbuf[1];', '\tif (ret != 0) return ret;\n\t*reg_data = rxbuf[1];')
         s = replace(s, '  uint8_t reg_data;\n  for(uint8_t reg_addr', '  uint8_t reg_data = 0;\n  for(uint8_t reg_addr')
         s = replace(s, 'dev->dec_rate_int = dec_val;', 'dev->dec_rate_dec = dec_val;', 2)
         s = replace(s, '*dec_val = dev->dec_rate_int;', '*dec_val = dev->dec_rate_dec;')
         # The API uses thousandths; do not store the converted Q16 register value in the cache.
         s = replace(s, 'uint8_t lsb;\n\n\tif (dev->ctrl_mode == AD7779_PIN_CTRL)',
                     'uint8_t lsb;\n\tuint16_t original_dec = dec_val;\n\n'
-                    '\tif (!int_val || int_val > 4095 || dec_val > 999) return FAILURE;\n'
+                    '\tif (!int_val || int_val > 4095 || dec_val > 999) return -1;\n'
                     '\tif (dev->ctrl_mode == AD7779_PIN_CTRL)')
         s = s.replace('dev->dec_rate_dec = dec_val;', 'dev->dec_rate_dec = original_dec;')
         s = replace(s, '\tdev->cached_reg_val[reg_addr] = reg_data;',
-                    '\tif (ret == SUCCESS) dev->cached_reg_val[reg_addr] = reg_data;')
+                    '\tif (ret == 0) dev->cached_reg_val[reg_addr] = reg_data;')
         return s
     edit('Src/ad7779.c', adc)
 
@@ -138,7 +141,7 @@ def prepare():
   __HAL_RCC_CRS_CLK_ENABLE();
   RCC_CRSInitTypeDef crs = {0};
   crs.Prescaler = RCC_CRS_SYNC_DIV1;
-  crs.Source = RCC_CRS_SYNC_SOURCE_USB2;
+  crs.Source = RCC_CRS_SYNC_SOURCE_USB1; /* USB1 = OTG_HS, the port wired to PB14/PB15. */
   crs.Polarity = RCC_CRS_SYNC_POLARITY_RISING;
   crs.ReloadValue = __HAL_RCC_CRS_RELOADVALUE_CALCULATE(48000000, 1000);
   crs.ErrorLimitValue = RCC_CRS_ERRORLIMIT_DEFAULT;
@@ -146,6 +149,16 @@ def prepare():
   HAL_RCCEx_CRSConfig(&crs);''')
         return s
     edit('Src/usb_device.c', clock)
+    # The generated suspend callback stops the PHY clock, but neither the HAL reset nor the
+    # resume path restarts it, so a suspend (e.g. data cable connected after boot) leaves the
+    # device unable to answer the next enumeration. The board is self-powered: keep it running.
+    def usb_conf(s):
+        s = replace(s, '  __HAL_PCD_GATE_PHYCLOCK(hpcd);\n',
+                    '  /* PHY clock deliberately not gated: nothing restarts it on reset/resume. */\n')
+        s = replace(s, '  /* USER CODE BEGIN 3 */\n',
+                    '  /* USER CODE BEGIN 3 */\n  __HAL_PCD_UNGATE_PHYCLOCK(hpcd);\n')
+        return s
+    edit('Src/usbd_conf.c', usb_conf)
     # DMA scratch memory has no flash image. Without NOLOAD, objcopy fills the entire
     # address gap from internal flash to SRAM, producing a ~640 MB binary.
     edit('STM32H743ZITx_FLASH.ld', lambda s: replace(s, '.dma_buffer :', '.dma_buffer (NOLOAD) :'))
