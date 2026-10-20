@@ -1,5 +1,10 @@
 # FreeEEG32 OpenVibe Docker Readme
 
+This preserves the older OpenViBE/Docker integration notes. For current firmware
+installation and USB updates, use [Flash/Windows](../Flash/Windows/README.md) or
+[Flash/Linux](../Flash/Linux/README.md). Host-side rates and filters must match
+the rate selected on the board.
+
 #### Materials:
 
 FreeEEG32 Board

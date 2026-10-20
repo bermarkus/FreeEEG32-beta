@@ -1,0 +1,7 @@
+# Keep maintained launchers runnable after a Windows or Linux checkout.
+FreeEEG32.sh text eol=lf
+Flash/Linux/*.sh text eol=lf
+Firmware/tools/*.sh text eol=lf
+FreeEEG32.cmd text eol=crlf
+Flash/Windows/*.cmd text eol=crlf
+Firmware/Beta/flash.cmd text eol=crlf

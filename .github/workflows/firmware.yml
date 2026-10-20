@@ -1,0 +1,64 @@
+name: Firmware build and simulation
+on:
+  workflow_dispatch:
+  push:
+    paths: ['Firmware/**', 'Flash/**', 'SetupGuides/images/**', 'FreeEEG32*', '.github/workflows/firmware.yml']
+  pull_request:
+    paths: ['Firmware/**', 'Flash/**', 'SetupGuides/images/**', 'FreeEEG32*', '.github/workflows/firmware.yml']
+permissions:
+  contents: read
+jobs:
+  launchers:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Test platform launchers without hardware or tool installation
+        run: python -m unittest discover -s Flash/tests -v
+      - name: Test discovery, USB update and settings without hardware
+        run: python -m unittest discover -s Firmware/Beta/tests -v
+  uf2:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        cpu_mhz: [40, 80, 160, 240, 320, 400, 480]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi libnewlib-arm-none-eabi
+      - name: Python tests
+        run: |
+          python -m unittest discover -s Firmware/Beta/tests -v
+          python -m unittest discover -s Firmware/UF2/tests -v
+      - name: Native firmware simulations
+        run: |
+          mkdir -p Firmware/build
+          cc -std=c11 -O2 -Wall -Wextra -IFirmware/Beta/tests/mocks -IFirmware/Beta/Inc Firmware/Beta/tests/test_firmware.c Firmware/Beta/Src/control_protocol.c Firmware/Beta/Src/settings.c Firmware/Beta/Src/watchdog.c -o Firmware/build/test_firmware
+          Firmware/build/test_firmware
+          cc -std=c11 -O2 -Wall -Wextra -IFirmware/Beta/Inc Firmware/Beta/tests/test_watchdog.c Firmware/Beta/Src/watchdog.c -o Firmware/build/test_watchdog
+          Firmware/build/test_watchdog
+          cc -std=c11 -O2 -Wall -Wextra -IFirmware/Beta/Inc Firmware/Beta/tests/test_settings.c Firmware/Beta/Src/settings.c -o Firmware/build/test_settings
+          Firmware/build/test_settings
+          cc -std=c11 -O2 -Wall -Wextra -DFREEEEG32_CPU_MHZ=${{ matrix.cpu_mhz }} -IFirmware/Beta/Inc Firmware/Beta/tests/test_clock.c -o Firmware/build/test_clock
+          Firmware/build/test_clock
+          cc -std=c11 -Wall -Wextra -IFirmware/UF2/Inc Firmware/UF2/tests/test_update.c Firmware/UF2/Src/uf2_update.c Firmware/UF2/Src/uf2_disk.c -o Firmware/build/test_uf2
+          Firmware/build/test_uf2
+      - name: Build UF2 and factory bundle
+        run: python Firmware/UF2/build.py --cpu-mhz ${{ matrix.cpu_mhz }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freeeeg32-uf2-${{ matrix.cpu_mhz }}mhz-board-test-candidate
+          path: |
+            Firmware/build/uf2/freeeeg32-uf2-release.zip
+            Firmware/build/uf2/manifest.json
+          if-no-files-found: error

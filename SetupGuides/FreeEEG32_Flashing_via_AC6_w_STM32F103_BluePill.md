@@ -1,5 +1,9 @@
 # FreeEEG32 Flashing via AC6 w/ STM32F103 Blue Pill
 
+**Historical workflow:** use the current [Windows](../Flash/Windows/README.md) or
+[Linux](../Flash/Linux/README.md) launchers for direct ST-Link and UF2 updates.
+Old project/probe files are preserved in [Firmware/Legacy](../Firmware/Legacy/README.md).
+
 #### Materials
 
 [STM32F103C8T6 "Blue Pill"](https://stm32-base.org/boards/STM32F103C8T6-Blue-Pill.html)
@@ -15,7 +19,7 @@ FreeEEG32 board.
 ##### FreeEEG32 software
 [System Workbench for STM32](https://www.openstm32.org/System%2BWorkbench%2Bfor%2BSTM32) (registration required, recommend you use this on Ubuntu 16.04 or 18.04 as this is how we will access OpenVibe)
 
-FreeEEG32 Firmware (included in this repo under /Firmware/AC6). Replace the firmware files with the contents of [EEG_WindowsCompat.tar.gz](https://github.com/neuroidss/FreeEEG32-beta/blob/master/Firmware/AC6/EEG_WindowsCompat.tar.gz) to enable Windows (and probably Mac) compatibility, this will get integrated once tested fully. 
+FreeEEG32 Firmware (included in this repo under /Firmware/Legacy/AC6). Replace the firmware files with the contents of [EEG_WindowsCompat.tar.gz](../Firmware/Legacy/AC6/EEG_WindowsCompat.tar.gz) to enable Windows (and probably Mac) compatibility, this will get integrated once tested fully.
 
 
 ## Setting up the Blue Pill
@@ -30,7 +34,7 @@ Plug the SWDIO, SWDCLK, and 3v3 + GND pins on the end of the Blue Pill to the co
 
 ![20211009_120941](https://user-images.githubusercontent.com/18196383/136671396-2eef736f-1b4c-45d0-9874-1dd068560976.jpg)
 
-Connect to the STLink (plugged into a USB2.0 port, 3.0 wouldn't connect for me) via the Programmer software above. Open the CMSIS-DAP V1 F103 Firmware (included in this repo under /Firmware/CMSIS-DAP_hex)
+Connect to the STLink (plugged into a USB2.0 port, 3.0 wouldn't connect for me) via the Programmer software above. Open the CMSIS-DAP V1 F103 Firmware (included in this repo under /Firmware/Legacy/CMSIS-DAP_hex)
 with the program, click the tab, and then click the Download option and it should update the Blue Pill. 
 
 ![Capture](https://user-images.githubusercontent.com/18196383/136671404-3a5922ac-efa6-402a-bbf7-69910682f1b9.PNG)
@@ -47,7 +51,7 @@ FT232RL USB to UART converter OR ESP32 developer board with EN pin shorted to gr
 
 [STM32 Flasher Demonstrator GUI](https://www.st.com/en/development-tools/flasher-stm32.html)
 
-CMSIS-DAP V1 F103 Firmware (included in this repo under /Firmware/CMSIS-DAP_hex)
+CMSIS-DAP V1 F103 Firmware (included in this repo under /Firmware/Legacy/CMSIS-DAP_hex)
 
 
 This part adapted from [Circuit Digest](https://circuitdigest.com/microcontroller-projects/programming-stm32f103c8-board-using-usb-port)
@@ -82,7 +86,7 @@ Check if it worked by removing the USB-UART converter and plugging into the Micr
 
 ## Flashing the FreeEEG32
 
-First, in /Firmware/AC6 unzip the STM32H743ZI_alpha1.5_SD_CDC.zip/.tar.xz
+First, in /Firmware/Legacy/AC6 unzip the STM32H743ZI_alpha1.5_SD_CDC.zip/.tar.xz
 to the same folder.
 
 With AC6 installed, click on the .cproject file in the newly unzipped folder 
