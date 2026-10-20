@@ -126,5 +126,7 @@ write protection is changed automatically.
   — SWD, reset, voltage reference and connector details.
 - [Microsoft USB serial driver](https://learn.microsoft.com/en-us/windows-hardware/drivers/usbcon/usb-driver-installation-based-on-compatible-ids)
   — CDC class/subclass matching for the built-in Windows driver.
-- [Analog Devices AD7779 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/AD7779.pdf)
-  — HR modulator clock, SRC limits, PGA gain and settling behavior.
+- [Analog Devices AD7771 datasheet](https://www.analog.com/media/en/technical-documentation/data-sheets/AD7771.pdf)
+  — the board's ADC (BOM: AD7771BCPZ): HR modulator clock, SRC limits (SINC3 decimation
+  16–4095.99, SINC5 16–2048), PGA gain and settling behavior. The driver and register
+  names come from the shared AD7779 family code.

@@ -120,7 +120,7 @@ In any serial terminal, commands start with `!` and end in CR, LF, or CRLF:
 | `!HELP SETTINGS` / `!HELP PRESETS` / `!HELP DIAG` | Usage, defaults and diagnostic units |
 | `!INFO` | Board, firmware/build identity, protocol and runtime CPU/AHB MHz |
 | `!STATUS` | Rate, complete captures, missed DRDY events, DMA errors, USB/UART drops, RX overflow, ADC fault and `readback_mask` (ADCs whose register readback disagreed with a write) |
-| `!CHECK` | Measure DRDY for 500 ms against the selected rate (`drdy_hz`, `rate_ok` within 1 %) and read back the gain registers on all four ADCs; report pass/fail masks and the last failed ADC/register/operation/value |
+| `!CHECK` | Measure DRDY for 500 ms against the selected rate (`drdy_hz`, `rate_ok` within 1 %) and read back the SRC dividers, SINC3 filter selection and gains on all four ADCs; report pass/fail masks and the last failed ADC/register/operation/value |
 | `!DIAG` | Last full streaming window's measured rates/sleep wait fraction; maximum observed capture/latency/work times; reset flags |
 | `!SETTINGS` | Current rate and all 32 gains; saved/default source and dirty flag |
 | `!PRESET DEFAULT` | Apply 512 Hz and gain 8 on all channels; unsaved |
@@ -130,14 +130,14 @@ In any serial terminal, commands start with `!` and end in CR, LF, or CRLF:
 | `!LOAD` | Apply saved rate/gains, or defaults if no valid saved record exists |
 | `!FACTORY` | Apply 512 Hz/gain 8, erase saved settings and save these defaults |
 | `!STOP` | Pause capture and output; report `was_streaming=0` or `was_streaming=1` |
-| `!RATE 512` | Set all four AD7779 SRC dividers for 512 samples/s; keeps the boot-programmed rate when it is already 512 |
-| `!RATE 1024` / `!RATE 2048` | Set 1024 / 2048 samples/s. On the bench board, returning to 512 Hz afterwards needs a reboot |
+| `!RATE 512` | Set all four AD7771 SRC dividers for 512 samples/s, then resynchronize the ADCs with a START pulse |
+| `!RATE 1024` / `!RATE 2048` | Set 1024 / 2048 samples/s |
 | `!GAIN 1 4` | Set channel 1 gain to 4; channels 1–32, gains 1/2/4/8 |
 | `!START` | Reply `OK START`, then resume acquisition |
 | `!REBOOT` | Reply, then reset and load the saved settings, or defaults if none |
 | `!BOOTLOADER` | In a UF2 application, reply and reset into the update drive; standalone firmware returns an installation-required error |
-| `!SPIREAD 1 17` | Bench diagnostic: raw AD7779 read frames for one register (ADC 1–4, register 0–127, decimal) plus the driver read |
-| `!SPIWRITE 1 17 100` | Bench diagnostic: one raw AD7779 register write (value 0–255, decimal); bypasses settings, verification and the driver cache |
+| `!SPIREAD 1 17` | Bench diagnostic: raw AD7771 read frames for one register (ADC 1–4, register 0–127, decimal) plus the driver read |
+| `!SPIWRITE 1 17 100` | Bench diagnostic: one raw AD7771 register write (value 0–255, decimal); bypasses settings, verification and the driver cache |
 
 Commands are case insensitive. Every prefixed command pauses acquisition,
 including invalid commands, and replies only through USB. Start again explicitly
