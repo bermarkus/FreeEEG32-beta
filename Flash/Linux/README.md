@@ -14,6 +14,10 @@ flash-precompiled skips the compiler.**
 
 ## First install: build and flash with ST-Link
 
+This compiles the current edited source and flashes both this fork's EEG firmware
+and UF2 bootloader as `freeeeg32-factory.hex` (main menu **4**). "Factory" means
+the combined first-install/recovery image built from this fork.
+
 Wire [SWDIO, SWCLK, ground and verified STM32 NRST](../../README.md#swd-programming),
 power the board normally, then run:
 
@@ -40,6 +44,10 @@ Edit `Firmware/Beta/Inc` / `Src`, not generated `Firmware/build/source`.
 UF2, factory HEX, manifest and release ZIP appear in `Firmware/build/uf2/`.
 
 ## Flash a precompiled image
+
+This flashes an existing file without compiling (main menu **3**). Source edits
+made after that file was built are not included. The default factory HEX contains
+both this fork's EEG firmware and UF2 bootloader.
 
 ```bash
 bash Flash/Linux/flash-precompiled.sh ~/Downloads/freeeeg32-factory.hex --backend openocd

@@ -5,6 +5,13 @@ The custom loader uses the board's existing **PB14/PB15 USB data port**. Install
 to expose the **FREEEEG32** drive. Copy `freeeeg32-application.uf2` onto it. The
 loader verifies the upload, resets, installs it and starts the EEG application.
 
+`freeeeg32-factory.hex` is this fork's combined EEG application and UF2 bootloader,
+built from its source. "Factory" means first install/recovery; it is separate from
+ST's built-in ROM bootloader. Main menu **3** flashes an existing compiled HEX
+without rebuilding. **4** compiles your current edited source, then flashes the new
+combined HEX. For later application changes, choose **2** to build, then **5** to
+update over USB while keeping the installed loader.
+
 **Hardware status:** ARM GCC builds and host tests pass. USB enumeration,
 electrical timing and power-loss recovery still need physical board testing.
 

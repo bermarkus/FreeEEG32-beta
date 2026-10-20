@@ -17,8 +17,8 @@ bash FreeEEG32.sh
 | --- | --- |
 | 1 | Install/check all tools |
 | 2 | Build firmware from edited source |
-| 3 | Flash a precompiled factory image with ST-Link |
-| 4 | Build and flash with ST-Link |
+| 3 | Flash an existing compiled firmware + UF2 loader with ST-Link |
+| 4 | Build edited source, then flash firmware + UF2 loader with ST-Link |
 | 5 | Update firmware over USB |
 | 6 | Configure sampling, gain and saved settings |
 | 7 | Check USB, firmware and ADC settings |
@@ -39,13 +39,23 @@ contains the launchers and helpers needed to flash, update and configure a board
 ## First installation
 
 1. Connect ST-Link to the [SWD pins below](#swd-programming) and power the board.
-2. Choose **4** to build and flash, or **3** to flash `freeeeg32-factory.hex`.
+2. Choose **4** to compile your edited source and flash it, or **3** to flash an existing `freeeeg32-factory.hex` without compiling.
 3. Connect the board's **USB data port** to the computer for EEG streaming and configuration.
 
-The factory image includes the application and USB update loader. Build outputs
-are in `Firmware/build/uf2/`; edit sources in `Firmware/Beta/Inc` and `Src`.
+**`freeeeg32-factory.hex` is this fork's combined EEG firmware and UF2 bootloader.**
+"Factory" means the first-install/recovery package. It is built from this fork's
+source and is separate from ST's built-in ROM bootloader.
+
+**Option 3** uses an already compiled HEX from a previous build or an extracted
+release ZIP; it does not include source edits made since that build. **Option 4**
+compiles the current source, creates a fresh combined HEX and flashes it.
+Build outputs are in `Firmware/build/uf2/`; edit application sources in
+`Firmware/Beta/Inc` and `Firmware/Beta/Src`. Bootloader sources are in `Firmware/UF2`.
 
 ## USB updates
+
+To update after editing source, choose **2** to build, then **5** to install the
+new application over USB. The installed UF2 loader stays in place.
 
 Close EEG software using the board, open the launcher and choose **5**.
 The helper detects the board, enters update mode, finds its drive and copies

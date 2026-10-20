@@ -11,7 +11,7 @@ Choose your operating system:
 | --- | --- | --- |
 | Choose an action interactively | `Windows/Menu.cmd` | `Linux/menu.sh` |
 | Compile edited source into UF2 + factory HEX | `Windows/Build.cmd` | `Linux/build.sh` |
-| Compile and flash a board through ST-Link | `Windows/Build-and-Flash.cmd` | `Linux/build-and-flash.sh` |
+| Compile edited source and flash firmware + UF2 loader through ST-Link | `Windows/Build-and-Flash.cmd` | `Linux/build-and-flash.sh` |
 | Flash an existing HEX/BIN/ELF without compiling | `Windows/Flash-Precompiled.cmd` | `Linux/flash-precompiled.sh` |
 | Update through the installed USB loader | `Windows/USB-Update.cmd` | `Linux/usb-update.sh` |
 | Configure sample rate, gains and saved settings | `Windows/Configure.cmd` | `Linux/configure.sh` |
@@ -25,6 +25,12 @@ Choose your operating system:
 Run commands from the repository root, or use an absolute launcher path. Relative
 image paths are interpreted from your current directory. The root `FreeEEG32.cmd`
 and `FreeEEG32.sh` open the main menu.
+
+**Menu 3** flashes an existing compiled HEX without building; source edits are
+not included until you build again. **Menu 4** compiles the current edited source
+and flashes the new result. The default `freeeeg32-factory.hex` contains this
+fork's EEG application and UF2 bootloader together. "Factory" means the combined
+first-install/recovery package.
 
 **First install:** connect ST-Link over SWD, power the target normally, and flash
 `freeeeg32-factory.hex`. **Later updates:** press RESET twice within **600 ms**,
